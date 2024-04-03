@@ -1,3 +1,3 @@
-from topsimp import UnionFindImg
-from topsimp.UnionFindImg import *
+from topsimp import classes
+from topsimp.classes import *
 
