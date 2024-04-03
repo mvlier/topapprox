@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "topsimp"
+version = "0.0.1"
+authors = [
+  { name="Matias de Jong van Lier", email="matias.vanlier@gmail.com" },
+  { name="Shizuo Kaji"},
+  { name="Junyan Chu" },
+  { name="Sebastían Elías Graiff Zurita"}
+]
+description = "Package for computing topological simplification of function using Persistent Homology."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/mvlier/topsimp"
+Issues = "https://github.com/mvlier/topsimp/issues"
