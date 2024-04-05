@@ -7,7 +7,7 @@ name = "topsimp"
 version = "0.0.1"
 authors = [
   { name="Matias de Jong van Lier", email="matias.vanlier@gmail.com" },
-  { name="Shizuo Kaji"},
+  { name="Shizuo Kaji", email="shizuo.kaji@gmail.com"},
   { name="Junyan Chu" },
   { name="Sebastían Elías Graiff Zurita"}
 ]
