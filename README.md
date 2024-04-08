@@ -1,2 +1,8 @@
-# topsimp
- Package for computing topological simplification of functions on 2-manifolds (possibly with boundary) using Persistent Homology.
+# topapprox
+ Package for computing topological approximation in various settings (... in development)
+
+ # Installation
+
+ # Usage
+
+ For a more complete tutorial click here.

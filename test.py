@@ -1,4 +1,4 @@
-import topsimp as ts
+import topapprox as ta
 import numpy as np
 import time
 import matplotlib.pyplot as plt
