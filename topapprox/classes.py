@@ -137,7 +137,7 @@ class UnionFindImg():
   def compute(self, epsilon=0, compute_persistence=True, verbose=False):
       self.component = ['permanent_component'] # self.component[i] has the list of vertices that merged into another component and created self.persitence[i]
       self.epsilon = epsilon # threshold for elimination of small bump
-      wrapper = tqdm if verbose else lambda x:x # for showing progress-bar
+      # wrapper = tqdm if verbose else lambda x:x # for showing progress-bar
 
       #iterate over the edges, which are already ordered by birth value
       if self.use_numba:
@@ -146,7 +146,7 @@ class UnionFindImg():
         self.parent = np.arange(self.shape[0]*self.shape[1]) # stores the parent (boss) of each vertex
         self.modified = self.birth.copy() # stores the modified (smoothed) function value
         self.persistence = [(self.birth.min(),float('inf'))] # list of cycles in the form (birth,death). Initially, the permanent cycle is added.
-        for edge in wrapper(self.edges):
+        for edge in self.edges:
           #self.reduce((np.ravel_multi_index(edge[0], self.shape),np.ravel_multi_index(edge[1], self.shape)))
           self.reduce(edge)
       self.persistence=np.array(self.persistence)
