@@ -8,16 +8,17 @@ Todo:
 import numpy as np
 import networkx as nx
 import itertools
+from collections import Counter
 from .link_reduce import *
 
 
 #Class for graph input
 class TopologicalFilterGraph():
-  def __init__(self, input=None, use_numba=True):
+  def __init__(self, input=None):
     self.modified = None
+    self.G = None
     self.pos = None #position for drawing graph
     self.diagram = [np.array([None]),np.array([None])] #Persistence diagram, with [PH0, PH1]
-    self.use_numba=use_numba
     if isinstance(input,np.ndarray):
       self.from_array(input)
     elif input is not None:
@@ -25,16 +26,15 @@ class TopologicalFilterGraph():
 
   def from_faces(self, F: list, filtration: dict, *, boundary_vertices=None, verbose=True):
     # given face data F, create the graph and its dual
-    self.G = nx.Graph()
     #given faces F, obtain all Edges E and boundary vertices
     self.faces = F
+    self.vertices = list(set(sum([list(s) for s in F],[])))
     facePerEdge = {} #{edge: number of incident faces}
     for f in F:
         for i in range(len(f)):
             edge = tuple(sorted([f[i],f[i-1]]))
             facePerEdge[edge] = facePerEdge.get(edge, 0) + 1
     self.E = list(facePerEdge.keys())
-    self.G.add_edges_from(self.E)
     if verbose or (boundary_vertices is None):
         if max(facePerEdge.values()) > 2:
             problematicEdges = [k for k, v in facePerEdge.items() if v > 2]
@@ -50,18 +50,19 @@ class TopologicalFilterGraph():
     self.boundary = boundary.copy()
     self.filtration = filtration.copy()
     # check if all vertices are given filtration values
-    if set(self.G)!=set(filtration.keys()):
+    if not set(self.vertices) <= set(filtration.keys()):
         raise ValueError("give filtration values for all the vertices!")
     # create dual edges
-    dualE = []
-    for f in F:
-        for i in range(2, len(f) - 1):
-            edge = tuple(sorted([f[0],f[i]]))
-            dualE.append(edge)
-        for i in range(1, len(f) - 2):
-            for j in range(i+2, len(f)):
-                edge = tuple(sorted([f[i],f[j]]))
-                dualE.append(edge)
+    dualE = sum([[tuple(sorted([f[i],f[j]])) for i in range(len(f)-1) for j in range(i+1,len(f))] for f in F],[])
+    # dualE = [] ## below is wrong
+    # for f in F:
+    #     for i in range(2, len(f) - 1):
+    #         edge = tuple(sorted([f[0],f[i]]))
+    #         dualE.append(edge)
+    #     for i in range(1, len(f) - 2):
+    #         for j in range(i+2, len(f)):
+    #             edge = tuple(sorted([f[i],f[j]]))
+    #             dualE.append(edge)
     self.dualE = list(set(dualE))
     self.INF_V = ["infty"] # vertex at infinity for one-point compactification
     self.dualE.extend([(self.INF_V[0],u) for u in self.boundary]) # boundary vertices are connected to the infinity
@@ -76,16 +77,23 @@ class TopologicalFilterGraph():
     self.dualE = [self.dualE[i] for i in np.argsort(filtration_dualE_max)]
 
   ## generalisation to include non-gfaces
-  def from_faces_nonfaces(self, F: list, nF: list, filtration: dict, erbose=True):
+  def from_faces_nonfaces(self, F: list, nF: list, filtration: dict, verbose=True):
     # given face data F, create the graph and its dual
-    self.G = nx.Graph()
     #given faces F, obtain all Edges E and boundary vertices
-    self.faces=F
-    self.E = list(set(sum([ [frozenset((f[-1],f[0]))]+[frozenset((f[i],f[i+1])) for i in range(len(f)-1)] for f in F+nF],[])))
-    self.G.add_edges_from(self.E)
+    self.faces=F+nF # for drawing
+    self.vertices = list(set(sum([list(s) for s in F],[])) | set(sum([list(s) for s in nF],[])))
+    #self.E = list(set(sum([ [frozenset((f[-1],f[0]))]+[frozenset((f[i],f[i+1])) for i in range(len(f)-1)] for f in F+nF],[])))
+    E = Counter(sum([ [frozenset((f[-1],f[0]))]+[frozenset((f[i],f[i+1])) for i in range(len(f)-1)] for f in F+nF],[]))
+    self.E = list(E)
+    self.boundary = set()
+    for e,cnt in E.items():
+      if cnt==1:
+        self.boundary = self.boundary.union(e)
+      if cnt>2:
+        raise ValueError(f"The edge {e} belongs to more than two faces!")
     self.filtration = filtration.copy()
     # check if all vertices are given filtration values
-    if set(self.G)!=set(filtration.keys()):
+    if not set(self.vertices) <= set(filtration.keys()):
       raise ValueError("give filtration values for all the vertices!")
     # create dual edges
     dualE = sum([[frozenset((f[i],f[j])) for i in range(len(f)-1) for j in range(i+1,len(f))] for f in F],[])
@@ -179,7 +187,6 @@ class TopologicalFilterGraph():
       death = max(self.birth[ui],self.birth[vi])
       if up != vp: # if their bosses are different (i.e., they belong to different families)
         killed = up if self.birth[up] > self.birth[vp] else vp
-        #print(self.idx2node[killed])
         birth = self.birth[killed] # choose the younger one
         if birth < death: # one of families is killed to produce a cycle
           self.persistence.append((birth,death)) # (birth,death)
@@ -189,10 +196,10 @@ class TopologicalFilterGraph():
           self.link(up,vp)
 
   ## compute PH along with the smoothed filtration values
-  def compute(self, epsilon=0, dual=False, verbose=False):
+  def compute(self, epsilon=0, dual=False, use_numba=False, verbose=False):
     self.epsilon=epsilon
     ## mapping from node index to node name
-    self.idx2node = list(self.G.nodes())
+    self.idx2node = self.vertices.copy()
     if dual:
       E = self.dualE
       sign = -1
@@ -204,23 +211,19 @@ class TopologicalFilterGraph():
     ## mapping from node name to node index
     self.node2idx = {u: i for i,u in enumerate(self.idx2node)}
     self.modified = np.array([sign*self.filtration[u] for u in self.idx2node]) # the last entry is for the point at infinity
+    E = np.sort([(self.node2idx[u],self.node2idx[v]) for u,v in E],axis=1)[:,::-1] # respect vertex order
 
-    if self.use_numba:
+    if use_numba:
       ## TODO: still slower with numba
-      E = np.sort([(self.node2idx[u],self.node2idx[v]) for u,v in E],axis=1)[:,::-1] # index list
-      self.modified, self.persistence = _link_reduce(self.modified, E, self.epsilon)
+      self.modified, self.persistence, basin = _link_reduce(self.modified, E, self.epsilon)
     else:
       self.birth = self.modified.copy()
       self.parent = np.arange(len(self.birth))
       self.persistence = [(self.birth.min(),float('inf'))] # list of cycles in the form (birth,death). Initially, the permanent cycle is added.
       # iterating over edges
       for u,v in E:
-        ui = self.node2idx[u] # u,v denote the node names, and ui,vi are their indices
-        vi = self.node2idx[v]
-        if ui<vi: # respect vertex order
-          ui,vi = vi,ui
         #print("edge ",(u,v),max(self.birth[ui],self.birth[vi]))
-        self.reduce(ui,vi)
+        self.reduce(u,v)
 
     if dual:
       self.modified = -self.modified[:-len(self.INF_V)] # remove the infinity point
@@ -234,6 +237,7 @@ class TopologicalFilterGraph():
   def reorient(self):
     k=0
     List=list(range(len(self.faces)-1))
+    self.faces = [list(f) for f in self.faces]
     while List:
       for j in List:
         interP=[x for x in self.faces[k] if x in self.faces[j]]
@@ -250,12 +254,9 @@ class TopologicalFilterGraph():
         break
 
 
-  def pos_from_faces(self):
-
+  def pos_from_faces(self): ## still buggy
     self.reorient()
-
     PE = nx.PlanarEmbedding()
-
     for node in self.boundary:
       faces = [face for face in self.faces if node in face]
 
@@ -275,14 +276,17 @@ class TopologicalFilterGraph():
       add_edge(node,nb1,None)
       add_edge(node,nb2,nb1)
       faces.pop(faces.index(face))
-      while not faces == []:
+      while len(faces)>0:
         face = [f for f in faces if nb2 in f]
-        face = face[0]
-        nb1 = nb2
-        idx = face.index(node)
-        nb2 = next_nbh(face)
-        add_edge(node,nb2,nb1)
-        faces.pop(faces.index(face))
+        if len(face)>0:
+          face = face[0]
+          nb1 = nb2
+          idx = face.index(node)
+          nb2 = next_nbh(face)
+          add_edge(node,nb2,nb1)
+          faces.pop(faces.index(face))
+        else:
+          break
 
     internal_nodes = set(self.G.nodes) - set(self.boundary)
 
@@ -297,12 +301,16 @@ class TopologicalFilterGraph():
       add_edge(node, nb2, nb1)
       faces.pop()
       while len(faces) > 1:
-        face = [f for f in faces if nb2 in f][0]
-        idx = face.index(node)
-        nb1 = nb2
-        nb2 = face[idx-len(face)+1]
-        add_edge(node, nb2, nb1)
-        faces.pop(faces.index(face))
+        face = [f for f in faces if nb2 in f]
+        if len(face)>0:
+          face = face[0]
+          idx = face.index(node)
+          nb1 = nb2
+          nb2 = face[idx-len(face)+1]
+          add_edge(node, nb2, nb1)
+          faces.pop(faces.index(face))
+        else:
+          break
     try:
       PE.check_structure()
       pos = nx.combinatorial_embedding_to_pos(PE)
@@ -312,6 +320,9 @@ class TopologicalFilterGraph():
     return(pos)  
     
   def draw(self, *, with_filtration=False, with_labels=False, modified=False, ax=None, node_size=600, font_size=8):
+    if self.G is None:
+      self.G = nx.Graph()
+      self.G.add_edges_from(self.E)
     if self.pos == None:
       self.pos = self.pos_from_faces()
     #Drawing

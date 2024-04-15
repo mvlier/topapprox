@@ -8,8 +8,8 @@ Todo:
 __all__ = ["_link_reduce"]
 
 import numpy as np
-from numba import njit,f8,i8,prange
-from numba.typed import List
+from numba import njit,f8,i8,prange,types
+from numba.typed import List,Dict
 
 #'Tuple((f8[:],f8[:,:]))(f8[:],i8[:,:],f8)'
 @njit(parallel=True, fastmath=True) # cache=True
@@ -24,6 +24,7 @@ def _link_reduce(birth, edges, epsilon, keep_basin=False):
     persistence.append((birth.min(),np.inf,birth.argmin()))
     parent = np.arange(birth.shape[0])
     children = dict()
+    #children = Dict.empty(key_type=i8,value_type=i8[:]) # typing makes slower...
     modified = birth.copy()
     for i in range(edges.shape[0]):
         ui,vi = edges[i,0],edges[i,1]
