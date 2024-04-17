@@ -11,7 +11,7 @@ authors = [
   { name="Junyan Chu" },
   { name="Sebastían Elías Graiff Zurita"}
 ]
-description = "Package for computing topological simplification of function using Persistent Homology."
+description = "Package for computing topological filtering of singals over networks using Persistent Homology."
 readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
