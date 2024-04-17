@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "topapprox"
-version = "0.0.1"
+version = "0.0.2"
 authors = [
   { name="Matias de Jong van Lier", email="matias.vanlier@gmail.com" },
   { name="Shizuo Kaji", email="shizuo.kaji@gmail.com"},
