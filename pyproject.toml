@@ -21,5 +21,5 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mvlier/topsimp"
-Issues = "https://github.com/mvlier/topsimp/issues"
+Homepage = "https://github.com/mvlier/topapprox"
+Issues = "https://github.com/mvlier/topapprox/issues"
