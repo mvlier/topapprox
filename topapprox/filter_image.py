@@ -48,7 +48,7 @@ class TopologicalFilterImage():
         self.edges = np.array([(np.ravel_multi_index(u, self.shape), np.ravel_multi_index(v, self.shape)) for u, v in E])[sorted_indices]
 
         
-    def highpass_filter(self, epsilon, keep_basin=False):
+    def low_pers_filter(self, epsilon, keep_basin=False):
         """ computes topological high-pass filtering
         Args:
             epsilon (float): cycles having persistence below this value will be eliminated
@@ -75,21 +75,5 @@ class TopologicalFilterImage():
         else:
             return(modified)
         
-
-    def lowpass_filter(self, epsilon, keep_basin=False)
-        """ computes topological low-pass filtering
-        Args:
-            epsilon (float): cycles having persistence above this value will be eliminated
-            keep_basin (bool): if set to True, basin information will be stored for re-use. This makes the computation much slower but effective when filterings for multiple epsilons are computed.
-        Returns:
-            np.array: a filtered image
-        """
-        self.epsilon = epsilon
-        if self.basin is None:
-            modified, persistence, basin = _link_reduce(self.birth, self.edges, self.epsilon, keep_basin=keep_basin)
-            self.persistence=np.array(persistence)
-            if keep_basin:
-                self.basin = basin
-        else:
 
 
