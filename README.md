@@ -19,6 +19,8 @@ MIT License
 ## Get Started
 
 - Look at the tutorial [click here](Interactive_Tutorial_topapprox.ipynb).
+- Examples in our [paper](https://arxiv.org/abs/2408.14109) are reproduced [here](https://github.com/mvlier/topapprox/blob/main/Paper%20examples/Reproducing_paper_examples.ipynb)
+
 
 ## Installation
 
@@ -26,5 +28,5 @@ MIT License
 
 ## Citation
 
-- Matias de Jong van Lier, Junyan Chu, Sebastían Elías Graiff Zurita, Shizuo Kaji, "Topological filtering of a signal over a network", in perparation
+- Matias de Jong van Lier, Sebastían Elías Graiff Zurita, Shizuo Kaji, "Topological filtering of a signal over a network", [arXiv:2408.14109](https://arxiv.org/abs/2408.14109)
 
