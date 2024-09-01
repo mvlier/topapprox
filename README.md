@@ -24,7 +24,7 @@ MIT License
 
 ## Installation
 
-    % pip install -U topapprox
+    % pip install git+https://github.com/mvlier/topapprox@main
 
 ## Citation
 
