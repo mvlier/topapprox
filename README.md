@@ -1,6 +1,6 @@
-# topapprox: A Pythobn package for computing topological filtering
+# topapprox: A Python package for computing topological filtering
 
-copyright by [Matias de Jong van Lier](https://mvlier.github.io/), [Junyan Chu](https://sites.google.com/view/junyan-chu/), Sebastían Elías Graiff Zurita, [Shizuo Kaji](https://www.skaji.org/), 2024
+copyright by [Matias de Jong van Lier](https://sites.google.com/view/matiasvanlier), [Junyan Chu](https://sites.google.com/view/junyan-chu/), Sebastían Elías Graiff Zurita, [Shizuo Kaji](https://www.skaji.org/), 2024
 
 ## CAUTION
 
