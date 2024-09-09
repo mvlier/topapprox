@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools", "wheel","pybind11>=2.5.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "topapprox"
-version = "0.0.2"
+version = "0.0.3"
 authors = [
   { name="Matias de Jong van Lier", email="matias.vanlier@gmail.com" },
   { name="Shizuo Kaji", email="shizuo.kaji@gmail.com"},
@@ -19,6 +19,9 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+dependencies = [
+  "pybind11>=2.5.0",
+  ]
 
 [project.urls]
 Homepage = "https://github.com/mvlier/topapprox"

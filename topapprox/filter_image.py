@@ -6,13 +6,13 @@ Todo:
 """
 
 import numpy as np
-from .link_reduce import *
-
+#from .link_reduce_numba import *   ## numba
+from .link_reduce import link_reduce
 
 class TopologicalFilterImage():
     """Base class for topological filtering for images
 
-    Compute topological (high-pass) filtering for a image
+    Compute topological filtering for a image
         
     Attributes:
         shape (tuple[int,int]): shape of the image
@@ -58,7 +58,7 @@ class TopologicalFilterImage():
         """
         self.epsilon = epsilon
         if self.basin is None:
-            modified, persistence, basin = _link_reduce(self.birth, self.edges, self.epsilon, keep_basin=keep_basin)
+            modified, persistence, basin = link_reduce(self.birth, self.edges, self.epsilon, keep_basin=keep_basin)
             self.persistence=np.array(persistence)
             if keep_basin:
                 self.basin = basin
