@@ -149,7 +149,7 @@ class TopologicalFilterGraph():
   #Returns the persistence diagram as list of numpy arrays [PH0,PH1]
   def get_diagram(self):
     if np.all(self.diagram[0]) == None:
-      self.diagram[0] = np.array(self.compute())
+      self.diagram[0] = np.array(self.compute())[:,:2] # without location
     if np.all(self.diagram[1]) == None:
       self.diagram[1] = self._dualPH0_to_PH1(self.compute(dual=True))
     return(self.diagram)
@@ -196,7 +196,7 @@ class TopologicalFilterGraph():
           self.link(up,vp)
 
   ## compute PH along with the smoothed filtration values
-  def compute(self, epsilon=0, dual=False, use_numba=False, verbose=False):
+  def compute(self, epsilon=0, dual=False, use_c=True, keep_basin=False, verbose=False):
     self.epsilon=epsilon
     ## mapping from node index to node name
     self.idx2node = self.vertices.copy()
@@ -213,9 +213,11 @@ class TopologicalFilterGraph():
     self.modified = np.array([sign*self.filtration[u] for u in self.idx2node]) # the last entry is for the point at infinity
     E = np.sort([(self.node2idx[u],self.node2idx[v]) for u,v in E],axis=1)[:,::-1] # respect vertex order
 
-    if use_numba:
-      ## TODO: still slower with numba
-      self.modified, self.persistence, basin = _link_reduce(self.modified, E, self.epsilon)
+    if use_c:
+      self.modified, self.persistence, basin, self.parent = link_reduce(self.modified, E, self.epsilon, keep_basin=keep_basin)
+      #self.modified, self.persistence, basin = _link_reduce(self.modified, E, self.epsilon)
+      if keep_basin:
+          self.basin = basin
     else:
       self.birth = self.modified.copy()
       self.parent = np.arange(len(self.birth))

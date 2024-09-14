@@ -25,6 +25,7 @@ class TopologicalFilterImage():
         self.persistence = None
         self.basin = None
         self.dual = dual
+        self.parent = None
 
         # create graph
         n,m = img.shape
@@ -58,7 +59,7 @@ class TopologicalFilterImage():
         """
         self.epsilon = epsilon
         if self.basin is None:
-            modified, persistence, basin = link_reduce(self.birth, self.edges, self.epsilon, keep_basin=keep_basin)
+            modified, persistence, basin, self.parent = link_reduce(self.birth, self.edges, self.epsilon, keep_basin=keep_basin)
             self.persistence=np.array(persistence)
             if keep_basin:
                 self.basin = basin

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topapprox"
-version = "0.0.3"
+version = "0.0.4"
 authors = [
   { name="Matias de Jong van Lier", email="matias.vanlier@gmail.com" },
   { name="Shizuo Kaji", email="shizuo.kaji@gmail.com"},
