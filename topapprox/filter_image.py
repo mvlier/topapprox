@@ -27,11 +27,11 @@ class TopologicalFilterImage():
         self.dual = dual
         self.parent = None
 
-        # create graph
+        # create graph: TODO this part should be optimised
         n,m = img.shape
         if not dual:
             self.birth = img.ravel().copy() # filtration value for each vertex
-            E = [((i,j),(i+1,j)) for i in range(n-1) for j in range(m)]+[((i,j),(i,j+1)) for j in range(m-1) for i in range(n)] #Edges for the grid case
+            E = [((i, j), (i+1, j)) for i in range(n-1) for j in range(m)] + [((i, j), (i, j+1)) for i in range(n) for j in range(m-1)] #Edges for the grid case
             img_extended = img
         else:
             min_val = -np.inf #-img.max()-1 # this value serves as -infty
@@ -40,12 +40,14 @@ class TopologicalFilterImage():
             self.birth = img_extended.ravel()
             self.shape = img_extended.shape
             E = [((i,j),(i+1,j)) for i in range(n+1) for j in range(m+2)]+[((i,j),(i,j+1)) for j in range(m+1) for i in range(n+2)] #Edges for the grid case
-            E+= [((i,j),(i+1,j+1)) for i in range(n+1) for j in range(m+1)]+[((i,j),(i-1,j+1)) for i in range(1,n+2) for j in range(m+1)]
+            E+= [((i,j),(i+1,j+1)) for i in range(n+1) for j in range(m+1)]+[((i,j),(i-1,j+1)) for i in range(1,n+2) for j in range(m+1)] #diagonals
 
         birth_edges = np.max([(img_extended[a[0]],img_extended[a[1]]) for a in E], axis=1) #Birth value for each edge
-        min_edges = np.min([(img_extended[a[0]],img_extended[a[1]]) for a in E], axis=1) #Minimum node value for each edge 
         # Sort edges first by birth_edges and then by -min_edges
-        sorted_indices = np.lexsort((-min_edges, birth_edges))
+        #min_edges = np.min([(img_extended[a[0]],img_extended[a[1]]) for a in E], axis=1) #Minimum node value for each edge 
+        #sorted_indices = np.lexsort((-min_edges, birth_edges))
+        # sort edges by birth
+        sorted_indices = np.argsort(birth_edges)
         self.edges = np.array([(np.ravel_multi_index(u, self.shape), np.ravel_multi_index(v, self.shape)) for u, v in E])[sorted_indices]
 
         
