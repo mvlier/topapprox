@@ -1,0 +1,23 @@
+
+2024-10-11, at 19:18:00
+test_1D_simple_python took 0.0026 seconds
+test_1D_simple_numba took 3.0390 seconds
+test_1D_simple_numba2 took 0.0009 seconds
+test_1D_simple_cpp took 0.4070 seconds
+test_2D_simple_python took 0.0024 seconds
+test_2D_simple_numba took 0.4595 seconds
+test_2D_simple_numba2 took 0.0008 seconds
+test_2D_simple_cpp took 0.0004 seconds
+test_pagoda took 77.6055 seconds
+
+2024-10-10, at 15:30:28
+test_1D_simple_python took 0.0010 seconds
+test_1D_simple_numba took 1.9045 seconds
+test_1D_simple_numba2 took 0.0008 seconds
+test_1D_simple_cpp took 0.0024 seconds
+test_2D_simple_python took 0.0008 seconds
+test_2D_simple_numba took 0.4143 seconds
+test_2D_simple_numba2 took 0.0008 seconds
+test_2D_simple_cpp took 0.0004 seconds
+test_pagoda took 83.9813 seconds
+

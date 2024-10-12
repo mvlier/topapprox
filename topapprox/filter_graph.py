@@ -1,24 +1,48 @@
-"""main module for topapprox
+"""
+Topapprox - Graph Filtering Main Module
+
+This module implements topological filtering for graphs, using persistent homology to perform low persistence filtering.
+More explicitely, given a graph with faces embadabble, we can compute the persistence diagram for the sublevel filtration of this
+array, and by choosing a threshold `epsilon` we can filter out all elements with persistence less than `epsilon`
+in the diagram. This module makes it possible to realize this filtered persistence diagram as a function which is
+at a distance of at most `epsilon` from the original function in the l-infinity norm.
+
+The module supports three different methods for computing the required operations: 
+1. A pure Python implementation
+2. A Numba-optimized implementation
+3. A C++ extension for higher performance.
+
+Classes:
+    TopologicalFilterImage: Base class for applying low persistence filtering to images.
 
 Todo:
-    * docstring
-    
+    * Adapt `TopologicalFilterImage so that it can filter 0 and 1 homology alternating until now low persistence class exists
+    * Remove obsolete attributes and methods, such as `keep_basin` and `persistence` in the constructor.
+    * Improve error handling and warnings for fallback scenarios.
+    * Develop a class for meshes
+    * Edit _link_reduce so that it can compute the BHT without having to compute the modified function.
+    * Optimize the way basin_size is computed
 """
 
 import numpy as np
 import networkx as nx
 import itertools
 from collections import Counter
-from .link_reduce import *
+from .mixins.Method_Loader import MethodLoaderMixin
+
 
 
 #Class for graph input
-class TopologicalFilterGraph():
-  def __init__(self, input=None):
+class TopologicalFilterGraph(MethodLoaderMixin):
+  def __init__(self, input=None, method="cpp"):
+    self.method = self.load_method(method, __package__) # python, numba or C++
     self.modified = None
-    self.G = None
+    self.G = None # graph structure
     self.pos = None #position for drawing graph
     self.diagram = [np.array([None]),np.array([None])] #Persistence diagram, with [PH0, PH1]
+    self.children = None
+    self.persistent_children = None
+    self.parent = None
     if isinstance(input,np.ndarray):
       self.from_array(input)
     elif input is not None:
@@ -149,7 +173,7 @@ class TopologicalFilterGraph():
   #Returns the persistence diagram as list of numpy arrays [PH0,PH1]
   def get_diagram(self):
     if np.all(self.diagram[0]) == None:
-      self.diagram[0] = np.array(self.compute())[:,:2] # without location
+      self.diagram[0] = np.array(self.compute())
     if np.all(self.diagram[1]) == None:
       self.diagram[1] = self._dualPH0_to_PH1(self.compute(dual=True))
     return(self.diagram)
@@ -171,32 +195,32 @@ class TopologicalFilterGraph():
           self.modified[self.parent == self.parent[vi]]=val
         self.parent[self.parent == self.parent[vi]]=self.parent[ui]
 
-  ## look at an edge and merge end points if necessary
-  def reduce(self,ui,vi):
-      # parents of u and v
-      up = self.parent[ui] # self.find(ui)
-      vp = self.parent[vi] # self.find(vi)
-      #print(up,vp,self.birth[up], self.birth[vp])
-      # if self.birth[ui] > self.birth[vi]:
-      #   killing = ui
-      # elif (self.birth[ui] == self.birth[vi]) and ui>vi:
-      #   killing = ui # break tie consistently
-      # else:
-      #   killing = vi
-      # death = self.birth[killing] # filtration value of the added edge
-      death = max(self.birth[ui],self.birth[vi])
-      if up != vp: # if their bosses are different (i.e., they belong to different families)
-        killed = up if self.birth[up] > self.birth[vp] else vp
-        birth = self.birth[killed] # choose the younger one
-        if birth < death: # one of families is killed to produce a cycle
-          self.persistence.append((birth,death)) # (birth,death)
-          #print(self.persistence[-1])
-          self.link(up,vp,death,self.epsilon)
-        else:
-          self.link(up,vp)
+  # ## look at an edge and merge end points if necessary
+  # def reduce(self,ui,vi):
+  #     # parents of u and v
+  #     up = self.parent[ui] # self.find(ui)
+  #     vp = self.parent[vi] # self.find(vi)
+  #     #print(up,vp,self.birth[up], self.birth[vp])
+  #     # if self.birth[ui] > self.birth[vi]:
+  #     #   killing = ui
+  #     # elif (self.birth[ui] == self.birth[vi]) and ui>vi:
+  #     #   killing = ui # break tie consistently
+  #     # else:
+  #     #   killing = vi
+  #     # death = self.birth[killing] # filtration value of the added edge
+  #     death = max(self.birth[ui],self.birth[vi])
+  #     if up != vp: # if their bosses are different (i.e., they belong to different families)
+  #       killed = up if self.birth[up] > self.birth[vp] else vp
+  #       birth = self.birth[killed] # choose the younger one
+  #       if birth < death: # one of families is killed to produce a cycle
+  #         self.persistence.append((birth,death)) # (birth,death)
+  #         #print(self.persistence[-1])
+  #         self.link(up,vp,death,self.epsilon)
+  #       else:
+  #         self.link(up,vp)
 
-  ## compute PH along with the smoothed filtration values
-  def compute(self, epsilon=0, dual=False, use_c=True, keep_basin=False, verbose=False):
+  ## Low persistence filter for Graphs
+  def low_pers_filter(self, epsilon=0, dual=False, verbose=False):
     self.epsilon=epsilon
     ## mapping from node index to node name
     self.idx2node = self.vertices.copy()
@@ -213,26 +237,31 @@ class TopologicalFilterGraph():
     self.modified = np.array([sign*self.filtration[u] for u in self.idx2node]) # the last entry is for the point at infinity
     E = np.sort([(self.node2idx[u],self.node2idx[v]) for u,v in E],axis=1)[:,::-1] # respect vertex order
 
-    if use_c:
-      self.modified, self.persistence, basin, self.parent = link_reduce(self.modified, E, self.epsilon, keep_basin=keep_basin)
-      #self.modified, self.persistence, basin = _link_reduce(self.modified, E, self.epsilon)
-      if keep_basin:
-          self.basin = basin
-    else:
-      self.birth = self.modified.copy()
-      self.parent = np.arange(len(self.birth))
-      self.persistence = [(self.birth.min(),float('inf'))] # list of cycles in the form (birth,death). Initially, the permanent cycle is added.
-      # iterating over edges
-      for u,v in E:
-        #print("edge ",(u,v),max(self.birth[ui],self.birth[vi]))
-        self.reduce(u,v)
+    # if use_numba:
+    #   ## TODO: still slower with numba
+    #   self.modified, self.persistence, basin = self.link_reduce(self.modified, E, self.epsilon)
+    # else:
+    #   self.birth = self.modified.copy()
+    #   self.parent = np.arange(len(self.birth))
+    #   self.persistence = [(self.birth.min(),float('inf'))] # list of cycles in the form (birth,death). Initially, the permanent cycle is added.
+    #   # iterating over edges
+    for u,v in E:
+      #print("edge ",(u,v),max(self.birth[ui],self.birth[vi]))
+      # self._link_reduce(u,v)
+      self.modified, self.parent, self.children, self.root, self.linking_vertex, self.persistent_children, self.positive_pers = self._link_reduce(self.modified, E, self.epsilon)
 
     if dual:
       self.modified = -self.modified[:-len(self.INF_V)] # remove the infinity point
-      self.persistence = self.persistence[1:] # remove the permanent cycle since Alexander duality looks at the reduced homology
+      # self.persistence = self.persistence[1:] # remove the permanent cycle since Alexander duality looks at the reduced homology
       self.idx2node = self.idx2node[:-len(self.INF_V)]
-    self.persistence = np.where(np.array(self.persistence) > -self.infinite_filtration_value, self.persistence, -np.inf)
-    return(self.persistence)
+    # self.persistence = np.where(np.array(self.persistence) > -self.infinite_filtration_value, self.persistence, -np.inf)
+    return {u: self.modified[i] for i,u in enumerate(self.idx2node)}
+
+
+
+
+
+
 
   #For Drawing
 

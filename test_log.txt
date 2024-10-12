@@ -1,0 +1,65 @@
+
+2024-10-10, at 15:26:42
+Test test_1D_simple_python took 0.00 seconds
+Test test_1D_simple_numba took 1.95 seconds
+Test test_1D_simple_numba2 took 0.00 seconds
+Test test_1D_simple_cpp took 0.00 seconds
+Test test_2D_simple_python took 0.00 seconds
+Test test_2D_simple_numba took 0.41 seconds
+Test test_2D_simple_numba2 took 0.00 seconds
+Test test_2D_simple_cpp took 0.00 seconds
+Test test_pagoda took 82.52 seconds
+
+2024-10-10, at 14:35:17
+Test test_pagoda took 79.14 seconds
+
+2024-10-10, at 14:33:58
+Test test_2D_simple_cpp took 0.00 seconds
+
+2024-10-10, at 14:33:58
+Test test_2D_simple_numba2 took 0.00 seconds
+
+2024-10-10, at 14:33:58
+Test test_2D_simple_numba took 0.42 seconds
+
+2024-10-10, at 14:33:58
+Test test_2D_simple_python took 0.00 seconds
+
+2024-10-10, at 14:33:58
+Test test_1D_simple_cpp took 0.00 seconds
+
+2024-10-10, at 14:33:58
+Test test_1D_simple_numba2 took 0.00 seconds
+
+2024-10-10, at 14:33:58
+Test test_1D_simple_numba took 1.95 seconds
+
+2024-10-10, at 14:33:56
+Test test_1D_simple_python took 0.00 seconds
+
+2024-10-10, at 14:14:21
+Test test_pagoda took 78.81 seconds
+
+2024-10-10, at 14:13:02
+Test test_2D_simple_cpp took 0.00 seconds
+
+2024-10-10, at 14:13:02
+Test test_2D_simple_numba2 took 0.00 seconds
+
+2024-10-10, at 14:13:02
+Test test_2D_simple_numba took 0.41 seconds
+
+2024-10-10, at 14:13:01
+Test test_2D_simple_python took 0.00 seconds
+
+2024-10-10, at 14:13:01
+Test test_1D_simple_cpp took 0.00 seconds
+
+2024-10-10, at 14:13:01
+Test test_1D_simple_numba2 took 0.00 seconds
+
+2024-10-10, at 14:13:01
+Test test_1D_simple_numba took 1.69 seconds
+
+2024-10-10, at 14:13:00
+Test test_1D_simple_python took 0.00 seconds
