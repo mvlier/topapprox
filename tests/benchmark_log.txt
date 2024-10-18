@@ -1,0 +1,83 @@
+
+    2024-10-18 11:22:12 - Benchmark Results:
+    Filtered 1-PH below threshold 0.2
+    from pagoda.npy with method=cpp
+    in 1.1844 seconds.
+
+    
+
+    2024-10-18 11:22:11 - Benchmark Results:
+    Filtered 0-PH below threshold 0.2
+    from pagoda.npy with method=cpp
+    in 0.4455 seconds.
+
+    
+
+    2024-10-18 11:22:10 - Benchmark Results:
+    Filtered 1-PH below threshold 0.2
+    from pagoda.npy with method=numba
+    in 1.2929 seconds.
+
+    
+
+    2024-10-18 11:22:09 - Benchmark Results:
+    Filtered 0-PH below threshold 0.2
+    from pagoda.npy with method=numba
+    in 1.1587 seconds.
+
+    
+
+    2024-10-18 11:22:07 - Benchmark Results:
+    Filtered 1-PH below threshold 0.2
+    from pagoda.npy with method=python
+    in 3.1428 seconds.
+
+    
+
+    2024-10-18 11:22:04 - Benchmark Results:
+    Filtered 0-PH below threshold 0.2
+    from pagoda.npy with method=python
+    in 1.8629 seconds.
+
+    
+
+    2024-10-15 12:35:28 - Benchmark Results:
+    Filtered 1-PH below threshold 0.2
+    from pagoda.npy with method=cpp
+    in 4.9423 seconds.
+
+    
+
+    2024-10-15 12:35:23 - Benchmark Results:
+    Filtered 0-PH below threshold 0.2
+    from pagoda.npy with method=cpp
+    in 2.4064 seconds.
+
+    
+
+    2024-10-15 12:35:20 - Benchmark Results:
+    Filtered 1-PH below threshold 0.2
+    from pagoda.npy with method=numba
+    in 5.1913 seconds.
+
+    
+
+    2024-10-15 12:35:15 - Benchmark Results:
+    Filtered 0-PH below threshold 0.2
+    from pagoda.npy with method=numba
+    in 3.0674 seconds.
+
+    
+
+    2024-10-15 12:35:11 - Benchmark Results:
+    Filtered 1-PH below threshold 0.2
+    from pagoda.npy with method=python
+    in 7.1421 seconds.
+
+    
+
+    2024-10-15 12:35:04 - Benchmark Results:
+    Filtered 0-PH below threshold 0.2
+    from pagoda.npy with method=python
+    in 4.0870 seconds.
+    

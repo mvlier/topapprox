@@ -2,7 +2,7 @@
 Pure python link and reduce function
 """
 
-__all__ = ["_link_reduce", "compute_descendants", "compute_root"]
+__all__ = ["_link_reduce", "compute_root"]
 
 import numpy as np
 
@@ -49,14 +49,14 @@ def _link_reduce(birth, edges, epsilon, keep_basin=False):
                 persistent_children[vp].append(up)
                 positive_pers.append(up)
                 
-                if death - birth[up] < epsilon:
-                    desc = compute_descendants(up, children)
+                # if death - birth[up] < epsilon:
+                #     desc = compute_descendants(up, children)
 
-                    # Update modified for each descendant
-                    for index in range(len(desc)): 
-                        modified[desc[index]] = death
+                #     # Update modified for each descendant
+                #     for index in range(len(desc)): 
+                #         modified[desc[index]] = death
 
-    return modified, parent, children, root, linking_vertex, persistent_children, np.array(positive_pers)
+    return parent, children, root, linking_vertex, persistent_children, np.array(positive_pers)
 
 
 def compute_root(v, ancestor):
@@ -66,13 +66,13 @@ def compute_root(v, ancestor):
     return ancestor[v]
 
 
-def compute_descendants(v, children):
-    desc = []  
-    descendants(v, children, desc)  
-    return desc
+# def compute_descendants(v, children):
+#     desc = []  
+#     descendants(v, children, desc)  
+#     return desc
 
 
-def descendants(v, children, desc):
-    desc.append(v)  # Append the current node
-    for child in children[v]:  # Use a loop to iterate over the children
-        descendants(child, children, desc)  # Recursively find descendants
+# def descendants(v, children, desc):
+#     desc.append(v)  # Append the current node
+#     for child in children[v]:  # Use a loop to iterate over the children
+#         descendants(child, children, desc)  # Recursively find descendants

@@ -17,23 +17,23 @@ int compute_root(int v, std::vector<int>& ancestor) {
     return ancestor[v];
 }
 
-// Function to compute all descendants of a node
-void descendants(int v, const std::vector<std::vector<int>>& children, std::vector<int>& desc) {
-    desc.push_back(v);  // Add the current node to the descendants
-    for (int child : children[v]) {  // Recursively find the descendants
-        descendants(child, children, desc);
-    }
-}
+// // Function to compute all descendants of a node
+// void descendants(int v, const std::vector<std::vector<int>>& children, std::vector<int>& desc) {
+//     desc.push_back(v);  // Add the current node to the descendants
+//     for (int child : children[v]) {  // Recursively find the descendants
+//         descendants(child, children, desc);
+//     }
+// }
 
-// Function to compute the descendants of a node
-std::vector<int> compute_descendants(int v, const std::vector<std::vector<int>>& children) {
-    std::vector<int> desc;
-    descendants(v, children, desc);
-    return desc;
-}
+// // Function to compute the descendants of a node
+// std::vector<int> compute_descendants(int v, const std::vector<std::vector<int>>& children) {
+//     std::vector<int> desc;
+//     descendants(v, children, desc);
+//     return desc;
+// }
 
 // The main link and reduce function
-std::tuple<std::vector<double>, std::vector<int>, std::vector<std::vector<int>>, int, std::vector<int>, std::vector<std::vector<int>>, std::vector<int>>
+std::tuple<std::vector<int>, std::vector<std::vector<int>>, int, std::vector<int>, std::vector<std::vector<int>>, std::vector<int>>
 _link_reduce_cpp(const std::vector<double>& birth, const std::vector<std::vector<int>>& edges, double epsilon, bool keep_basin = false) {
     
     std::vector<int> parent(birth.size());
@@ -46,7 +46,7 @@ _link_reduce_cpp(const std::vector<double>& birth, const std::vector<std::vector
 
     std::vector<std::vector<int>> children(birth.size());  // Initialize the children array
     std::vector<std::vector<int>> persistent_children(birth.size());  // Track children with non-zero persistence
-    std::vector<double> modified = birth;  // Copy the birth array
+    // std::vector<double> modified = birth;  // Copy the birth array
     std::vector<int> positive_pers; // List to store the positive persistence vertices apart from root
 
     for (const auto& edge : edges) {
@@ -73,18 +73,11 @@ _link_reduce_cpp(const std::vector<double>& birth, const std::vector<std::vector
             if (birth[up] < death) {  // A cycle is produced
                 persistent_children[vp].push_back(up);
                 positive_pers.push_back(up);
-
-                if (death - birth[up] < epsilon) {
-                    std::vector<int> desc = compute_descendants(up, children);
-                    for (int d : desc) {
-                        modified[d] = death;  // Update modified for each descendant
-                    }
-                }
             }
         }
     }
 
-    return std::make_tuple(modified, parent, children, root, linking_vertex, persistent_children, positive_pers);
+    return std::make_tuple(parent, children, root, linking_vertex, persistent_children, positive_pers);
 }
 
 // Wrapper function to interface with Python
@@ -114,18 +107,18 @@ py::tuple link_reduce_wrapper(py::array_t<double> birth, py::array_t<int> edges,
     // Convert the result back to Python objects
     py::list result_list;
 
-    // Convert std::vector<double> to numpy array
-    const auto& modified = std::get<0>(result);
-    py::array_t<double> modified_array(modified.size(), modified.data());
-    result_list.append(modified_array);
+    // // Convert std::vector<double> to numpy array
+    // const auto& modified = std::get<0>(result);
+    // py::array_t<double> modified_array(modified.size(), modified.data());
+    // result_list.append(modified_array);
 
     // Convert std::vector<int> parent to numpy array
-    const auto& parent = std::get<1>(result);
+    const auto& parent = std::get<0>(result);
     py::array_t<int> parent_array(parent.size(), parent.data());
     result_list.append(parent_array);
 
     // Convert children (vector of vectors) to Python list
-    const auto& children = std::get<2>(result);
+    const auto& children = std::get<1>(result);
     py::list children_list;
     for (const auto& child_vec : children) {
         children_list.append(py::cast(child_vec));
@@ -133,14 +126,14 @@ py::tuple link_reduce_wrapper(py::array_t<double> birth, py::array_t<int> edges,
     result_list.append(children_list);
 
     // Append root, linking_vertex, and persistent_children
-    result_list.append(py::cast(std::get<3>(result)));  // root
-    result_list.append(py::array_t<int>(std::get<4>(result).size(), std::get<4>(result).data()));  // linking_vertex
+    result_list.append(py::cast(std::get<2>(result)));  // root
+    result_list.append(py::array_t<int>(std::get<3>(result).size(), std::get<3>(result).data()));  // linking_vertex
     py::list persistent_children_list;
-    for (const auto& pchild_vec : std::get<5>(result)) {
+    for (const auto& pchild_vec : std::get<4>(result)) {
         persistent_children_list.append(py::cast(pchild_vec));
     }
     result_list.append(persistent_children_list);
-    result_list.append(py::array_t<int>(std::get<6>(result).size(), std::get<6>(result).data()));  // positive_pers
+    result_list.append(py::array_t<int>(std::get<5>(result).size(), std::get<5>(result).data()));  // positive_pers
 
 
     return py::tuple(result_list);
@@ -157,12 +150,12 @@ PYBIND11_MODULE(link_reduce_cpp, m) {
         return compute_root(v, ancestor_vec);
     }, "Compute the root/ancestor of a node");
 
-    // Expose the compute_descendants function
-    m.def("compute_descendants_cpp", [](int v, py::list children) {
-        std::vector<std::vector<int>> children_vec;
-        for (auto item : children) {
-            children_vec.push_back(item.cast<std::vector<int>>());
-        }
-        return compute_descendants(v, children_vec);
-    }, "Compute all descendants of a node");
+    // // Expose the compute_descendants function
+    // m.def("compute_descendants_cpp", [](int v, py::list children) {
+    //     std::vector<std::vector<int>> children_vec;
+    //     for (auto item : children) {
+    //         children_vec.push_back(item.cast<std::vector<int>>());
+    //     }
+    //     return compute_descendants(v, children_vec);
+    // }, "Compute all descendants of a node");
 }

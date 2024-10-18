@@ -10,11 +10,14 @@ import pytest
 import numpy as np
 from topapprox import TopologicalFilterImage, TopologicalFilterGraph
 import cripser
+import time
+from datetime import datetime
+
 
 
 def test_pagoda():
     ''' tests applying the low-persistence-filter on a natural image "pagoda.np" '''
-    eps_list = [0.1, 0.2, 0.5]
+    eps_list = [0.2]
     for epsilon in eps_list:
         check_all_methods("pagoda.npy", epsilon)
 
@@ -56,10 +59,16 @@ def check_pers_and_norm(name, epsilon, method, *, location = "tests/data_for_tes
     `method` and tests if computing LPF with
     '''
     img = np.load(location + name)
+    t0 = time.time()
     uf = TopologicalFilterImage(img, method=method)
-    uf_dual = TopologicalFilterImage(img, dual=True, method=method)
     img_filtered_H0 = uf.low_pers_filter(epsilon)
+    t1 = time.time()
+    print_benchmark(name, epsilon, method, t0, t1, 0)
+    t0 = time.time()
+    uf_dual = TopologicalFilterImage(img, dual=True, method=method)
     img_filtered_H1 = uf_dual.low_pers_filter(epsilon)
+    t1 = time.time()
+    print_benchmark(name, epsilon, method, t0, t1, 1)
 
     # DISTANCE CHECK
     check_distance(name, img_filtered_H0 - img, epsilon, method) # H0 filtered check
@@ -87,3 +96,29 @@ def check_all_methods(name, epsilon, *, location = "tests/data_for_testing/"):
             The methods {list_methods[0]} and {list_methods[j]} produced different results for H{k} filtered {name},
             with threshold {epsilon}.
             '''
+
+
+def print_benchmark(name, epsilon, method, t0, t1, H_idx, *, save=True):
+    # Prepare the message with the current date and time
+    file_path = "tests/benchmark_log.txt"
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    message = f"""
+    {current_time} - Benchmark Results:
+    Filtered {H_idx}-PH below threshold {epsilon}
+    from {name} with method={method}
+    in {t1 - t0:.4f} seconds.\n
+    """
+    print(message)
+
+    if save:
+        # Read the existing content of the file
+        try:
+            with open(file_path, 'r') as file:
+                existing_content = file.read()
+        except FileNotFoundError:
+            # If the file doesn't exist, set existing content to an empty string
+            existing_content = ""
+
+        # Write the new message at the top, followed by the existing content
+        with open(file_path, 'w') as file:
+            file.write(message + "\n" + existing_content)

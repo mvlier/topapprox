@@ -26,6 +26,7 @@ Todo:
 
 import numpy as np
 from .mixins.Method_Loader import MethodLoaderMixin
+from .bht import BasinHierarchyTree
 
 
 class TopologicalFilterImage(MethodLoaderMixin):
@@ -40,42 +41,21 @@ class TopologicalFilterImage(MethodLoaderMixin):
         method (str): Which method to use for `_link_reduce`, options are "python", "numba" or "cpp" (fastest)
     """
     
-    def __init__(self, img, *, dual=False, method="cpp"):
+    def __init__(self, img, *, method="cpp", dual=False, recursive=True):
         self.shape = img.shape
-        self.persistence = None
-        self.dual = dual
-        self.children = None
-        self.persistent_children = None
-        self.parent = None
-        self.positive_pers = None # 1D numpy array to store the list of vertices with positive persistence, apart from the root
         self.method = self.load_method(method, __package__) # python, numba or C++
-
-        # create graph
-        n,m = img.shape
-        if not dual:
-            self.birth = img.ravel().copy() # filtration value for each vertex
-            E = [((i,j),(i+1,j)) for i in range(n-1) for j in range(m)]+[((i,j),(i,j+1)) for j in range(m-1) for i in range(n)] #Edges for the grid case
-            img_extended = img
-        else:
-            min_val = -np.inf #-img.max()-1 # this value serves as -infty
-            img_extended = np.full((n+2,m+2),min_val)
-            img_extended[1:-1,1:-1] = -img # embed the negative of original image with a "frame" filled with -infty
-            self.birth = img_extended.ravel()
-            self.shape = img_extended.shape
-            E = [((i,j),(i+1,j)) for i in range(n+1) for j in range(m+2)]+[((i,j),(i,j+1)) for j in range(m+1) for i in range(n+2)] #Edges for the grid case
-            E+= [((i,j),(i+1,j+1)) for i in range(n+1) for j in range(m+1)]+[((i,j),(i-1,j+1)) for i in range(1,n+2) for j in range(m+1)]
-
-        self.descendants = None #TODO use this to save descendants
-        birth_edges = np.max([(img_extended[a[0]],img_extended[a[1]]) for a in E], axis=1) #Birth value for each edge
-        sorted_indices = np.argsort(birth_edges)
-        self.edges = np.array([(np.ravel_multi_index(u, self.shape), np.ravel_multi_index(v, self.shape)) for u, v in E])[sorted_indices]
+        self.bht = BasinHierarchyTree(recursive=recursive)
+        self.birth = img.ravel().copy() # filtration value for each vertex
+        self.dual = dual
+        self.edges = None
+        self.persistence = None
 
         
     #TODO: `keep_basin` now became obsolete, we have to either completely remove it, or include an option to 
     #      save all the basins when it is called. 
     # The reason it is obsolete is that now we have a list of children (`self.children`), and even more a list 
     # of non zero persistence children (`self.persistent_children``)
-    def low_pers_filter(self, epsilon, *, keep_basin=False):
+    def low_pers_filter(self, epsilon, *, size_gap = None):
         """ computes topological high-pass filtering
         Args:
             epsilon (float): cycles having persistence below this value will be eliminated
@@ -84,72 +64,74 @@ class TopologicalFilterImage(MethodLoaderMixin):
         Returns:
             np.array: a filtered image
         """
-        self.epsilon = epsilon
-        if self.children is None:
-            modified = self.update_link_reduce()
+        if self.bht.children is None:
+            self._update_BHT()
+
+        if size_gap is None:
+            modified = self.bht._low_pers_filter(epsilon)
         else:
-            # compute the modification using the stored children data if available
-            modified = self.birth.copy()
-            for vertex in self.persistent_children[self.root]:
-                self.filter_branch(vertex, self.epsilon, modified)
-        modified = modified.reshape(self.shape)
+            modified = self.bht._lpf_size_filter(epsilon, size_gap=size_gap)
         if(self.dual):
-            return(-modified[1:-1,1:-1])
+            modified = -modified[:-1]
+        modified = modified.reshape(self.shape)
+        return(modified)
+
+        
+    def _update_BHT(self):
+        '''Updates BHT via link_reduce method.
+        One essential ingredient for obtaining the BHT is the '''
+        if self.edges is None:
+            self._compute_sorted_edges()
+        self.bht.parent, \
+            self.bht.children, \
+                self.bht.root, \
+                    self.bht.linking_vertex, \
+                        self.bht.persistent_children, \
+                            self.bht.positive_pers = self._link_reduce(self.bht.birth, self.edges, 0)
+
+        
+    def _compute_sorted_edges(self):
+        ''' Saves the sorted edges in `self.edges`, if dual also turns `self.bht.birth`
+        into -self.bht.birth and includes one extra vertex valued -infty.
+        '''
+        # create graph
+        n,m = self.shape
+        edges = [(i*m + j, (i+1)*m + j) for i in range(n-1) for j in range(m)]+[(i*m + j, i*m + j+1) for j in range(m-1) for i in range(n)] #Edges for the grid case
+        # edges = np.array([(np.ravel_multi_index(u, self.shape), np.ravel_multi_index(v, self.shape)) for u, v in E])
+        # birth_edges = np.max([(self.birth[a[0]],self.birth[a[1]]) for a in edges], axis=1) #Birth value for each edge
+
+        if self.dual:
+            edges += [(i*m + j, (i+1)*m + j+1) for i in range(n-1) for j in range(m-1)] + \
+                 [(i*m + j, (i-1)*m + j+1) for i in range(1, n) for j in range(m-1)]
+
+            # Add one vertex valued -infty and connect the boundary to the vertex n*m
+            edges += [(j, n*m) for j in range(m)] + \
+                     [((n-1)*m + j, n*m) for j in range(m)] + \
+                     [(i*m, n*m) for i in range(1, n-1)] + \
+                     [(i*m + m-1, n*m) for i in range(1, n-1)]
+            
+            edges = np.array(edges, dtype=np.uint32)
+            self.bht.birth = np.concatenate((-self.birth, np.array([-np.inf])))
+            birth_edges = np.maximum(self.bht.birth[edges[:, 0]], self.bht.birth[edges[:, 1]])
         else:
-            return(modified)
-        
-    def update_link_reduce(self):
-        '''Updates BHT via link_reduce method, and returns the modified function'''
-        modified, self.parent, self.children, self.root, self.linking_vertex, self.persistent_children, self.positive_pers = self._link_reduce(self.birth, self.edges, self.epsilon)
-        return modified
-        
+            edges = np.array(edges, dtype=np.uint32)
+            self.bht.birth = self.birth.copy()
+            birth_edges = np.maximum(self.birth[edges[:, 0]], self.birth[edges[:, 1]])
+        sorted_indices = np.argsort(birth_edges)
+        self.edges = edges[sorted_indices]
+        # print(f"Edges:{self.edges}")
+
     def get_BHT(self, *, with_children=False):
-        ''' Returns the BHT as a list of parents, linking vertices and root. 
-        Additionally, if `with_children` is True,
-        also returns the list of children of each node
-        '''
-        if self.children == None:
-            _ = self.update_link_reduce()
-        if with_children:
-            return self.parent, self.linking_vertex, self.root, [list(x) for x in self.children]
-        return self.parent, self.linking_vertex, self.root
-        
-
-    def filter_branch(self, vertex, epsilon, modified):
-        ''' Given a `vertex`, a threshold `epsilon` and the current state of the function `modified`,
-        alters `modified` by eliminating all the classes in the branch of `v` in the BHT 
-        with positive persistence lower than `epsilon`.
-        '''
-        linking_vertex = self.linking_vertex[vertex]
-        persistence = self.birth[linking_vertex] - self.birth[vertex]
-        if  0 < persistence < epsilon:
-            modified[np.array(self.compute_descendants(vertex, self.children))] = self.birth[linking_vertex]
-        elif persistence >= epsilon:
-            for child_vertex in self.persistent_children[vertex]:
-                self.filter_branch(child_vertex, epsilon, modified)
-
-    def basin_size(self, vertex):
-        '''Returns the size of the basin of `vertex`
-        The basin is composed of `vertex` itself plus all its descendants'''
-        _ = self.get_BHT()
-        return len(self.compute_descendants(vertex, self.children))
-
-    def get_persistence(self, *, reduced=True):
-        '''Computes the reduced persistence diagram from the BHT'''
-        if isinstance(self.persistence, np.ndarray):
-            return self.persistence
-        
-        _ = self.get_BHT()
+        return self.bht._get_BHT(with_children=with_children)
     
-        #(birth, death, birth_location, death_location, basin_size)
-        self.persistence = np.array([[self.birth[v], self.birth[self.linking_vertex[v]], v, self.linking_vertex[v], self.basin_size(v)] for v in self.positive_pers])
+    def get_persistence(self, *, reduced=True):
+        if self.bht.children is None:
+            self._update_BHT()
+        return self.bht.get_persistence(reduced=reduced)
 
-        if reduced==False:
-            permanent_interval = np.array([[self.birth[self.root], np.inf, self.root, -1, np.inf]])
-            self.persistence = np.concatenate((self.persistence, permanent_interval))
         
-        return self.persistence
-        
+
+
 
 
 

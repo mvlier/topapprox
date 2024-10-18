@@ -29,12 +29,14 @@ import networkx as nx
 import itertools
 from collections import Counter
 from .mixins.Method_Loader import MethodLoaderMixin
+from .gwf import GraphWithFaces
+from .bht import BasinHierarchyTree
 
 
 
 #Class for graph input
 class TopologicalFilterGraph(MethodLoaderMixin):
-  def __init__(self, input=None, method="cpp"):
+  def __init__(self, input=None, method="cpp", dual=False, recursive=True):
     self.method = self.load_method(method, __package__) # python, numba or C++
     self.modified = None
     self.G = None # graph structure
@@ -43,114 +45,76 @@ class TopologicalFilterGraph(MethodLoaderMixin):
     self.children = None
     self.persistent_children = None
     self.parent = None
+    self.shape = None
+    self.gwf = None
+    self.dual = dual
+    self.bht = BasinHierarchyTree(recursive=recursive)
+    self.compute = "dual" if self.dual else "normal"
     if isinstance(input,np.ndarray):
       self.from_array(input)
     elif input is not None:
       raise ValueError(f"Unknown initialisation type")
 
-  def from_faces(self, F: list, filtration: dict, *, boundary_vertices=None, verbose=True):
-    # given face data F, create the graph and its dual
-    #given faces F, obtain all Edges E and boundary vertices
-    self.faces = F
-    self.vertices = list(set(sum([list(s) for s in F],[])))
-    facePerEdge = {} #{edge: number of incident faces}
-    for f in F:
-        for i in range(len(f)):
-            edge = tuple(sorted([f[i],f[i-1]]))
-            facePerEdge[edge] = facePerEdge.get(edge, 0) + 1
-    self.E = list(facePerEdge.keys())
-    if verbose or (boundary_vertices is None):
-        if max(facePerEdge.values()) > 2:
-            problematicEdges = [k for k, v in facePerEdge.items() if v > 2]
-            raise ValueError(f"Not embeddable in the plane, at least one edge belongs to more than two faces. Problematic edges: {problematicEdges}")
-        boundary = [edge for edge, v in facePerEdge.items() if v == 1]
-        boundary = set(list(itertools.chain.from_iterable(boundary)))
-        if (boundary_vertices is not None) and (set(boundary_vertices) != boundary):
-            print("detected boundary:", boundary)
-            print("specified boundary:", boundary_vertices)
-            raise ValueError("specified boundary_vertices are wrong!")
-    else:
-        boundary = set(boundary_vertices)
-    self.boundary = boundary.copy()
-    self.filtration = filtration.copy()
-    # check if all vertices are given filtration values
-    if not set(self.vertices) <= set(filtration.keys()):
-        raise ValueError("give filtration values for all the vertices!")
-    # create dual edges
-    dualE = sum([[tuple(sorted([f[i],f[j]])) for i in range(len(f)-1) for j in range(i+1,len(f))] for f in F],[])
-    # dualE = [] ## below is wrong
-    # for f in F:
-    #     for i in range(2, len(f) - 1):
-    #         edge = tuple(sorted([f[0],f[i]]))
-    #         dualE.append(edge)
-    #     for i in range(1, len(f) - 2):
-    #         for j in range(i+2, len(f)):
-    #             edge = tuple(sorted([f[i],f[j]]))
-    #             dualE.append(edge)
-    self.dualE = list(set(dualE))
-    self.INF_V = ["infty"] # vertex at infinity for one-point compactification
-    self.dualE.extend([(self.INF_V[0],u) for u in self.boundary]) # boundary vertices are connected to the infinity
-    self.infinite_filtration_value = max(filtration.values())+1
-    self.filtration[self.INF_V[0]] = self.infinite_filtration_value
-    # sort edges by the birth value
-    filtration_E_max = [max(self.filtration[u],self.filtration[v]) for u,v in self.E]
-    #filtration_E_min = [min(self.filtration[u],self.filtration[v]) for u,v in self.E]
-    #self.E = [self.E[i] for i in np.lexsort((filtration_E_min,filtration_E_max))]
-    self.E = [self.E[i] for i in np.argsort(filtration_E_max)]
-    filtration_dualE_max = [max(-self.filtration[u],-self.filtration[v]) for u,v in self.dualE]
-    self.dualE = [self.dualE[i] for i in np.argsort(filtration_dualE_max)]
+  def compute_gwf(self, F: list, H: list, signal: np.ndarray):
+    """Computes the graph with faces
+    """
+    # TODO: adapt this class so that it is possible to compute normal 
+    # and dual for the same class to optimize
+    self.gwf = GraphWithFaces(F=F, H=H, signal=signal, compute=self.compute)
 
-  ## generalisation to include non-gfaces
-  def from_faces_nonfaces(self, F: list, nF: list, filtration: dict, verbose=True):
-    # given face data F, create the graph and its dual
-    #given faces F, obtain all Edges E and boundary vertices
-    self.faces=F+nF # for drawing
-    self.vertices = list(set(sum([list(s) for s in F],[])) | set(sum([list(s) for s in nF],[])))
-    #self.E = list(set(sum([ [frozenset((f[-1],f[0]))]+[frozenset((f[i],f[i+1])) for i in range(len(f)-1)] for f in F+nF],[])))
-    E = Counter(sum([ [frozenset((f[-1],f[0]))]+[frozenset((f[i],f[i+1])) for i in range(len(f)-1)] for f in F+nF],[]))
-    self.E = list(E)
-    self.boundary = set()
-    for e,cnt in E.items():
-      if cnt==1:
-        self.boundary = self.boundary.union(e)
-      if cnt>2:
-        raise ValueError(f"The edge {e} belongs to more than two faces!")
-    self.filtration = filtration.copy()
-    # check if all vertices are given filtration values
-    if not set(self.vertices) <= set(filtration.keys()):
-      raise ValueError("give filtration values for all the vertices!")
-    # create dual edges
-    dualE = sum([[frozenset((f[i],f[j])) for i in range(len(f)-1) for j in range(i+1,len(f))] for f in F],[])
-    self.dualE = list(set(dualE))
-    self.INF_V=[]
-    self.infinite_filtration_value = max(filtration.values())+1
-    for i,f in enumerate(nF):
-      self.INF_V.append(f"infty{i}") # vertex at infinity
-      self.filtration[f"infty{i}"] = self.infinite_filtration_value
-      self.dualE.extend([frozenset((f[j],f"infty{i}")) for j in range(len(f))])
-    # sort edges by the birth value
-    filtration_E_max = [max(self.filtration[u],self.filtration[v]) for u,v in self.E]
-    self.E = [self.E[i] for i in np.argsort(filtration_E_max)]
-    filtration_dualE_max = [max(-self.filtration[u],-self.filtration[v]) for u,v in self.dualE]
-    self.dualE = [self.dualE[i] for i in np.argsort(filtration_dualE_max)]
 
   ## create a graph with faces from image
   def from_array(self, img: np.array):
     self.shape = img.shape
     if len(img.shape)==2: # 2D case
       n,m = img.shape
-      F = [[(i,j),(i+1,j),(i+1,j+1),(i,j+1)] for i in range(n-1) for j in range(m-1)]
+      F = [[i*m + j,(i+1)*m +j, (i+1)*m + j+1, i*m + j+1] for i in range(n-1) for j in range(m-1)]
     elif len(img.shape)==1: # 1D case
       n,m = img.shape[0],1
-      F = [[(i,0),(i+1,0)] for i in range(n-1)]
+      F = [[i, i+1] for i in range(n-1)]
     else:
       raise ValueError("array dimension should be 1 or 2!")
-    boundary_vertices =  [(0,j) for j in range(m)]+[(n-1,j) for j in range(m)]
-    boundary_vertices += [(i,0) for i in range(1,n-1)]+[(i,m-1) for i in range(1,n-1)]
-    filtration = {(i,j): img.reshape((n,-1))[i,j] for i in range(n) for j in range(m)}
-    self.from_faces(F, filtration, boundary_vertices=boundary_vertices)
-    self.n = n
-    self.m = m
+    boundary_vertices =  [j for j in range(m)] + [i*m + m-1 for i in range(1,n)] + \
+                         [(n-1)*m + m - j for j in range(2,m+1)] + [m*(n-i) for i in range(2,n)]
+    H = [boundary_vertices]
+    self.signal = img.ravel()
+    self.compute_gwf(F, H, self.signal)
+
+
+  def _update_BHT(self):
+    self.bht.birth = self.gwf.signal
+    if self.dual:
+      self.bht.parent, self.bht.children, self.bht.root, self.bht.linking_vertex, self.bht.persistent_children, self.bht.positive_pers = self._link_reduce(self.gwf.signal, self.gwf.dualE, 0)
+    else:
+      self.bht.parent, self.bht.children, self.bht.root, self.bht.linking_vertex, self.bht.persistent_children, self.bht.positive_pers = self._link_reduce(self.gwf.signal, self.gwf.E, 0)
+    
+  def low_pers_filter(self, epsilon, *, size_gap = None):
+      """ computes topological high-pass filtering
+      Args:
+          epsilon (float): cycles having persistence below this value will be eliminated
+          keep_basin (bool): if set to True, basin information will be stored for re-use. This makes the computation much slower but effective when filterings for multiple epsilons are computed.
+          method (string): can be chosen between "python", "numba" or "cpp".
+      Returns:
+          np.array: a filtered image
+      """
+      if self.bht.children is None:
+          self._update_BHT()
+
+      if size_gap is None:
+          modified = self.bht._low_pers_filter(epsilon)
+      else:
+          modified = self.bht._lpf_size_filter(epsilon, size_gap=size_gap)
+      if self.shape is not None:
+        if(self.dual):
+            modified = -modified[:self.shape[0]*self.shape[1]]
+        modified = modified.reshape(self.shape)
+        return(modified)
+      else:
+        if(self.dual):
+          n = self.gwf.signal.shape[0] - len(self.gwf.F) - len(self.gwf.H)
+          modified = -modified[:n]
+        return modified
+
 
   ## returns modified function values in the original array's shape
   def get_array(self):
@@ -220,7 +184,7 @@ class TopologicalFilterGraph(MethodLoaderMixin):
   #         self.link(up,vp)
 
   ## Low persistence filter for Graphs
-  def low_pers_filter(self, epsilon=0, dual=False, verbose=False):
+  def _low_pers_filter(self, epsilon=0, dual=False, verbose=False):
     self.epsilon=epsilon
     ## mapping from node index to node name
     self.idx2node = self.vertices.copy()
@@ -261,9 +225,11 @@ class TopologicalFilterGraph(MethodLoaderMixin):
 
 
 
-
-
-  #For Drawing
+  #######################################################################################
+  #######################################################################################
+  ################################ FOR DRAWING ##########################################
+  #######################################################################################
+  #######################################################################################
 
   def reorient(self):
     k=0

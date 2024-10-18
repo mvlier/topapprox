@@ -67,10 +67,10 @@ def aux_2D_simple(method):
                         [[3, 6, 1, 7, 8, 4], [], [5], [], [], [], [], [], [2]]
                     ],
                     [
-                        np.array([ 5,  9,  9,  9, 24,  1, 24, 24, 24,  4, 24, 24, 24, 24, 24, 21, 24, 24, 24, 24, 24, 24, 24, 24, 24]),
-                        np.array([ 5,  2,  3,  9, 14,  1,  6,  7,  8,  4, 15, 11, 17, 13, 19, 21, 16, 17, 18, 24, 21, 22, 23, 24, -1]),
-                        24,
-                        [[], [5], [], [], [9], [0], [], [], [], [3, 2, 1], [], [], [], [], [], [], [], [], [], [], [], [15], [], [], [23, 22, 21, 20, 19, 14, 10, 4, 17, 11, 7, 12, 8, 13, 16, 18, 6]]
+                        np.array([ 9,  4,  9,  9, 9,  9, 9, 9, 9,  9]),
+                        np.array([ 0,  1,  2,  3,  7,  5,  6,  7,  8, -1]),
+                        9,
+                        [[], [], [], [], [1], [], [], [], [], [7, 4, 3, 5, 2, 6, 8, 0]]
                     ]
                 ]
     
@@ -79,13 +79,25 @@ def aux_2D_simple(method):
         if isinstance(tests[i][0], np.ndarray):
             uf = TopologicalFilterImage(tests[i][0], method=method)
         result = uf.low_pers_filter(tests[i][1])
-        assert np.all(result == tests[i][2])
+        assert np.all(result == tests[i][2]), f'''
+        Failed for array 0-homology filter with array :\n
+        {tests[i][0]}\n
+        With thresholf {tests[i][1]} expected:\n
+        {tests[i][2]}\n
+        but got:\n
+        {result}'''
         check = check_BHT(uf, tests_bhts[j]) 
         assert check[0], check[1]
         j += 1
         uf = TopologicalFilterImage(result, dual=True, method=method)
         result = uf.low_pers_filter(tests[i][3])
-        assert np.all(result == tests[i][4])
+        assert np.all(result == tests[i][4]), f'''
+        Failed for array 1-homology filter with array :\n
+        {tests[i][2]}\n
+        With thresholf {tests[i][3]} expected:\n
+        {tests[i][4]}\n
+        but got:\n
+        {result}'''
         check = check_BHT(uf, tests_bhts[j]) 
         assert check[0], check[1]
         j += 1
