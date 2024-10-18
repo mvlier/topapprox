@@ -11,7 +11,7 @@ if it is set to "both", then both the normal and dual versions will be computed
 import numpy as np
 
 class GraphWithFaces:
-    def __init__(self, F=None, H=None, signal=None, compute="normal"):
+    def __init__(self, F=None, H=None, signal=None, compute="normal", is_mesh=False):
         """
         Initializes the graph with faces. Faces (F) and holes (H) should be
         lists of lists, where each inner list represents a sequence of vertices
@@ -21,6 +21,7 @@ class GraphWithFaces:
         :param H: List of holes, each hole is a list of vertices.
         :param signal: A NumPy array of shape (n_vertices,) representing the function values.
         :param compute: A string, can be either "normal", "dual" or "both"
+        :param ismesh: bool, if True a special case is considered for mesh (all faces are triangles). Holes can be anything.
         """
         self.F = F if F is not None else []
         self.H = H if H is not None else []
@@ -29,8 +30,9 @@ class GraphWithFaces:
         self.E = set()  # Use set to track unique edges
         self.compute = compute
         self.vertex_count = signal.shape[0]
+        self.is_mesh = is_mesh
         if compute == "dual" or compute == "both":
-            self.dualE = set()
+            self.dualE = self.E if self.is_mesh else set()
             self.dualE_signal = None
             self.signal = np.concatenate((signal, np.array([max([signal[v] for v in f]) for f in F]), np.full(len(H), np.inf)))
 
@@ -44,8 +46,9 @@ class GraphWithFaces:
         # Step 1: Add edges from faces and holes
         for face in self.F:
             self._add_edges(face)
-        for i in range(len(self.H)-1): # We can skip the final face, since all its edges were already included
-            self._add_edges(self.H[i])
+        n = len(self.H) - 1 if self.compute == "normal" else len(self.H)
+        for i in range(n): # We can skip the final face, since all its edges were already included
+            self._add_edges(self.H[i], ishole=True)
 
         if self.compute == "normal" or self.compute == "both":
             # Convert set of edges to numpy array for efficient operations
@@ -74,7 +77,7 @@ class GraphWithFaces:
         :param sequence: A list of vertices.
         """
         n = len(sequence)
-        if self.compute == "normal":
+        if self.compute == "normal" or (self.is_mesh and not ishole):
             for i in range(n):
                 v1, v2 = sequence[i], sequence[(i + 1) % n]
                 if v1 > v2:  # Manually check for edge direction to avoid sorting
@@ -99,4 +102,10 @@ class GraphWithFaces:
                     v1, v2 = v2, v1
                 self.E.add((v1, v2))
                 self.dualE.add((v1, v2))
+
+        if self.is_mesh and (self.compute != "normal") and ishole:
+            v3 = self.vertex_count
+            self.vertex_count += 1
+            for v in sequence:
+                self.dualE.add((v, v3))
 
