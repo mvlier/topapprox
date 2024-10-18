@@ -55,7 +55,7 @@ class TopologicalFilterImage(MethodLoaderMixin):
     #      save all the basins when it is called. 
     # The reason it is obsolete is that now we have a list of children (`self.children`), and even more a list 
     # of non zero persistence children (`self.persistent_children``)
-    def low_pers_filter(self, epsilon, *, size_gap = None):
+    def low_pers_filter(self, epsilon, *, size_range = None):
         """ computes topological high-pass filtering
         Args:
             epsilon (float): cycles having persistence below this value will be eliminated
@@ -67,10 +67,10 @@ class TopologicalFilterImage(MethodLoaderMixin):
         if self.bht.children is None:
             self._update_BHT()
 
-        if size_gap is None:
+        if size_range is None:
             modified = self.bht._low_pers_filter(epsilon)
         else:
-            modified = self.bht._lpf_size_filter(epsilon, size_gap=size_gap)
+            modified = self.bht._lpf_size_filter(epsilon, size_range=size_range)
         if(self.dual):
             modified = -modified[:-1]
         modified = modified.reshape(self.shape)

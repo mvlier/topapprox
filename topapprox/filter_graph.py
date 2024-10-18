@@ -36,7 +36,7 @@ from .bht import BasinHierarchyTree
 
 #Class for graph input
 class TopologicalFilterGraph(MethodLoaderMixin):
-  def __init__(self, input=None, method="cpp", dual=False, recursive=True, is_mesh=False):
+  def __init__(self, input=None, method="cpp", dual=False, recursive=True, is_triangulated=False):
     self.method = self.load_method(method, __package__) # python, numba or C++
     self.modified = None
     self.G = None # graph structure
@@ -47,7 +47,7 @@ class TopologicalFilterGraph(MethodLoaderMixin):
     self.parent = None
     self.shape = None
     self.gwf = None
-    self.is_mesh = is_mesh
+    self.is_triangulated = is_triangulated
     self.dual = dual
     self.bht = BasinHierarchyTree(recursive=recursive)
     self.compute = "dual" if self.dual else "normal"
@@ -61,7 +61,7 @@ class TopologicalFilterGraph(MethodLoaderMixin):
     """
     # TODO: adapt this class so that it is possible to compute normal 
     # and dual for the same class to optimize
-    self.gwf = GraphWithFaces(F=F, H=H, signal=signal, compute=self.compute, is_mesh=self.is_mesh)
+    self.gwf = GraphWithFaces(F=F, H=H, signal=signal, compute=self.compute, is_triangulated=self.is_triangulated)
 
 
   ## create a graph with faces from image
@@ -90,7 +90,7 @@ class TopologicalFilterGraph(MethodLoaderMixin):
       self.bht.birth = self.gwf.signal
       self.bht.parent, self.bht.children, self.bht.root, self.bht.linking_vertex, self.bht.persistent_children, self.bht.positive_pers = self._link_reduce(self.gwf.signal, self.gwf.E, 0)
     
-  def low_pers_filter(self, epsilon, *, size_gap = None):
+  def low_pers_filter(self, epsilon, *, size_range = None):
       """ computes topological high-pass filtering
       Args:
           epsilon (float): cycles having persistence below this value will be eliminated
@@ -102,10 +102,10 @@ class TopologicalFilterGraph(MethodLoaderMixin):
       if self.bht.children is None:
           self._update_BHT()
 
-      if size_gap is None:
+      if size_range is None:
           modified = self.bht._low_pers_filter(epsilon)
       else:
-          modified = self.bht._lpf_size_filter(epsilon, size_gap=size_gap)
+          modified = self.bht._lpf_size_filter(epsilon, size_range=size_range)
       if self.shape is not None:
         if(self.dual):
             modified = -modified[:self.shape[0]*self.shape[1]]

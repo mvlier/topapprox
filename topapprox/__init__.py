@@ -1,5 +1,6 @@
 from .filter_image import *
 from .filter_graph import *
+from .tools import *
 
 __all__ = ["TopologicalFilterImage","TopologicalFilterImage"]
 

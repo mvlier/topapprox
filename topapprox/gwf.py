@@ -11,7 +11,7 @@ if it is set to "both", then both the normal and dual versions will be computed
 import numpy as np
 
 class GraphWithFaces:
-    def __init__(self, F=None, H=None, signal=None, compute="normal", is_mesh=False):
+    def __init__(self, F=None, H=None, signal=None, compute="normal", is_triangulated=False):
         """
         Initializes the graph with faces. Faces (F) and holes (H) should be
         lists of lists, where each inner list represents a sequence of vertices
@@ -30,9 +30,9 @@ class GraphWithFaces:
         self.E = set()  # Use set to track unique edges
         self.compute = compute
         self.vertex_count = signal.shape[0]
-        self.is_mesh = is_mesh
+        self.is_triangulated = is_triangulated
         if compute == "dual" or compute == "both":
-            self.dualE = self.E if self.is_mesh else set()
+            self.dualE = self.E if self.is_triangulated else set()
             self.dualE_signal = None
             self.signal = np.concatenate((signal, np.array([max([signal[v] for v in f]) for f in F]), np.full(len(H), np.inf)))
 
@@ -77,7 +77,7 @@ class GraphWithFaces:
         :param sequence: A list of vertices.
         """
         n = len(sequence)
-        if self.compute == "normal" or (self.is_mesh and not ishole):
+        if self.compute == "normal" or (self.is_triangulated and not ishole):
             for i in range(n):
                 v1, v2 = sequence[i], sequence[(i + 1) % n]
                 if v1 > v2:  # Manually check for edge direction to avoid sorting
@@ -103,7 +103,7 @@ class GraphWithFaces:
                 self.E.add((v1, v2))
                 self.dualE.add((v1, v2))
 
-        if self.is_mesh and (self.compute != "normal") and ishole:
+        if self.is_triangulated and (self.compute != "normal") and ishole:
             v3 = self.vertex_count
             self.vertex_count += 1
             for v in sequence:
