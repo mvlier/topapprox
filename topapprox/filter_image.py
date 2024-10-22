@@ -41,14 +41,21 @@ class TopologicalFilterImage(MethodLoaderMixin):
         method (str): Which method to use for `_link_reduce`, options are "python", "numba" or "cpp" (fastest)
     """
     
-    def __init__(self, img, *, method="cpp", dual=False, recursive=True):
+    # Changed cpp to python
+    # changed vert
+    def __init__(self, img, *, method="cpp", dual=False, recursive=True, iter_vertex=False):
         self.shape = img.shape
-        self.method = self.load_method(method, __package__) # python, numba or C++
+        self.method = self.load_method(method, __package__, iter_vertex=iter_vertex) # python, numba or C++
         self.bht = BasinHierarchyTree(recursive=recursive)
         self.birth = img.ravel().copy() # filtration value for each vertex
         self.dual = dual
         self.edges = None
         self.persistence = None
+        self.iter_vertex = iter_vertex
+        if dual:
+            self.bht.birth = np.concatenate((-self.birth, np.array([-np.inf])))
+        else:
+            self.bht.birth = self.birth.copy()
 
         
     #TODO: `keep_basin` now became obsolete, we have to either completely remove it, or include an option to 
@@ -80,19 +87,26 @@ class TopologicalFilterImage(MethodLoaderMixin):
     def _update_BHT(self):
         '''Updates BHT via link_reduce method.
         One essential ingredient for obtaining the BHT is the '''
-        if self.edges is None:
-            self._compute_sorted_edges()
-        self.bht.parent, \
-            self.bht.children, \
-                self.bht.root, \
-                    self.bht.linking_vertex, \
-                        self.bht.persistent_children, \
-                            self.bht.positive_pers = self._link_reduce(self.bht.birth, self.edges, 0)
+        if self.iter_vertex:
+            self.bht.parent, \
+                self.bht.children, \
+                    self.bht.root, \
+                        self.bht.linking_vertex, \
+                            self.bht.persistent_children, \
+                                self.bht.positive_pers = self._link_reduce(self.bht.birth, self.shape, self.dual)
+        else:
+            if self.edges is None:
+                self._compute_sorted_edges()
+            self.bht.parent, \
+                self.bht.children, \
+                    self.bht.root, \
+                        self.bht.linking_vertex, \
+                            self.bht.persistent_children, \
+                                self.bht.positive_pers = self._link_reduce(self.bht.birth, self.edges, 0)
 
         
     def _compute_sorted_edges(self):
-        ''' Saves the sorted edges in `self.edges`, if dual also turns `self.bht.birth`
-        into -self.bht.birth and includes one extra vertex valued -infty.
+        ''' Saves the sorted edges in `self.edges`.
         '''
         # create graph
         n,m = self.shape
@@ -111,11 +125,9 @@ class TopologicalFilterImage(MethodLoaderMixin):
                      [(i*m + m-1, n*m) for i in range(1, n-1)]
             
             edges = np.array(edges, dtype=np.uint32)
-            self.bht.birth = np.concatenate((-self.birth, np.array([-np.inf])))
             birth_edges = np.maximum(self.bht.birth[edges[:, 0]], self.bht.birth[edges[:, 1]])
         else:
             edges = np.array(edges, dtype=np.uint32)
-            self.bht.birth = self.birth.copy()
             birth_edges = np.maximum(self.birth[edges[:, 0]], self.birth[edges[:, 1]])
         sorted_indices = np.argsort(birth_edges)
         self.edges = edges[sorted_indices]

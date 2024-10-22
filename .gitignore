@@ -132,3 +132,5 @@ dmypy.json
 
 
 local_testing.ipynb
+.vscode/
+settings.json

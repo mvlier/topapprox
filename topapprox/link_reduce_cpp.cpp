@@ -5,6 +5,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
+#include <iostream>  // For debugging
 
 namespace py = pybind11;
 
@@ -42,7 +43,7 @@ _link_reduce_cpp(const std::vector<double>& birth, const std::vector<std::vector
     std::iota(ancestor.begin(), ancestor.end(), 0);  // Initialize the ancestor array
     std::vector<int> linking_vertex(birth.size(), -1);
     int root = 0;
-    int n_pers = 1; // number of persistent intervals (starting at 1 to count the permanent cycle)
+    // int n_pers = 1; // number of persistent intervals (starting at 1 to count the permanent cycle)
 
     std::vector<std::vector<int>> children(birth.size());  // Initialize the children array
     std::vector<std::vector<int>> persistent_children(birth.size());  // Track children with non-zero persistence
@@ -139,6 +140,131 @@ py::tuple link_reduce_wrapper(py::array_t<double> birth, py::array_t<int> edges,
     return py::tuple(result_list);
 }
 
+// computes neighbor vertices of a vertex v in an image
+// std::vector<int> neighbors(int v, std::pair<int, int> shape) {
+//     int n = shape.first;
+//     int m = shape.second;
+//     std::vector<int> nbs(4, -1);
+    
+//     nbs[0] = (v % m == 0) ? -1 : v - 1;             // Left neighbor
+//     nbs[1] = (v % m == m - 1) ? -1 : v + 1;         // Right neighbor
+//     nbs[2] = (v < m) ? -1 : v - m;                  // Upper neighbor
+//     nbs[3] = (v > (n - 1) * m - 1) ? -1 : v + m;    // Lower neighbor
+    
+//     return nbs;
+// }
+
+void neighbors(int v, std::pair<int, int> shape, std::vector<int>& nbs, bool dual, int& size, int& extra_vertex) {
+    int n = shape.first;
+    int m = shape.second;
+    int row = v / m;
+    int col = v % m;
+    bool top = (row==0), bottom = (row==n-1); 
+    bool left = (col==0), right = (col==m-1);
+    
+    // Update the values in the preallocated nbs vector
+    nbs[0] = left ? size : v - 1;          // Left neighbor
+    nbs[1] = right ? size : v + 1;         // Right neighbor
+    nbs[2] = top ? size : v - m;           // Upper neighbor
+    nbs[3] = bottom ? size : v + m;        // Lower neighbor
+
+    if (dual) {
+        nbs[4] = top || left ? extra_vertex : v - m - 1;
+        nbs[5] = bottom || right ? extra_vertex : v + m + 1;
+        nbs[6] = top || right ? size : v - m + 1;
+        nbs[7] = bottom || left ? size : v + m - 1;
+    }
+}
+
+// Alternative version of link and reduce function iterating over vertices
+py::tuple _link_reduce_vertices_cpp(py::array_t<float> birth, std::pair<int, int> shape, bool dual) {
+    auto birth_unchecked = birth.unchecked<1>();  // Access elements as float
+    int size = birth.size();
+    int extra_vertex = size - 1; // only used if dual==True
+
+    std::vector<int> vertices_ordered(size);
+    std::iota(vertices_ordered.begin(), vertices_ordered.end(), 0);
+    std::sort(vertices_ordered.begin(), vertices_ordered.end(), [&](int a, int b) {
+        return birth_unchecked(a) < birth_unchecked(b);
+    });
+
+    // std::vector<int> vertex_birth_index(size);
+    // for (int i = 0; i < size; ++i) {
+    //     vertex_birth_index[vertices_ordered[i]] = i;
+    // }
+
+    std::vector<int> parent(size);
+    std::iota(parent.begin(), parent.end(), 0);  // Parent initialized to identity
+    std::vector<int> ancestor = parent;
+    std::vector<int> linking_vertex(size, -1);
+    int root = 0;
+    std::vector<int> positive_pers;
+    std::vector<std::vector<int>> children(size);
+    std::vector<std::vector<int>> persistent_children(size);
+
+    int n_neighbors = 4;
+    if (dual) {
+        n_neighbors = 8;
+    }
+    
+    std::vector<int> nbs(n_neighbors, -1);
+
+    for (const auto& v : vertices_ordered) {
+        neighbors(v, shape, nbs, dual, size, extra_vertex);
+        for (int u : nbs) {
+            if (u < size && birth_unchecked(u) <= birth_unchecked(v)) {
+                int up = compute_root(u, ancestor);
+                int vp = compute_root(v, ancestor);
+
+                if (up != vp) {
+                    if (birth_unchecked(up) < birth_unchecked(vp)) {
+                        std::swap(up, vp);
+                    }
+
+                    children[vp].push_back(up);
+                    parent[up] = vp;  // Update the parent
+                    ancestor[up] = vp;  // Update the ancestor
+                    root = vp;  // Set root to vp
+                    linking_vertex[up] = v;  // Track linking vertex
+
+                    // Debugging print for birth values (as float)
+                    if (birth_unchecked(up) < birth_unchecked(v)) {
+                        persistent_children[vp].push_back(up);
+                        positive_pers.push_back(up);
+                    }
+                }
+            }
+        }
+    }
+
+    py::list children_list;
+    for (const auto& child_vec : children) {
+        py::list child_pylist;
+        for (const auto& c : child_vec) {
+            child_pylist.append(c);
+        }
+        children_list.append(child_pylist);
+    }
+
+    py::list persistent_children_list;
+    for (const auto& p_child_vec : persistent_children) {
+        py::list p_child_pylist;
+        for (const auto& pc : p_child_vec) {
+            p_child_pylist.append(pc);
+        }
+        persistent_children_list.append(p_child_pylist);
+    }
+
+    return py::make_tuple(
+        py::array_t<int>(parent.size(), parent.data()),
+        children_list,
+        root,
+        py::array_t<int>(linking_vertex.size(), linking_vertex.data()),
+        persistent_children_list,
+        py::array_t<int>(positive_pers.size(), positive_pers.data())
+    );
+}
+
 // Define module and expose the functions
 PYBIND11_MODULE(link_reduce_cpp, m) {
     m.def("_link_reduce_cpp", &link_reduce_wrapper, "A function that performs link reduction",
@@ -150,12 +276,5 @@ PYBIND11_MODULE(link_reduce_cpp, m) {
         return compute_root(v, ancestor_vec);
     }, "Compute the root/ancestor of a node");
 
-    // // Expose the compute_descendants function
-    // m.def("compute_descendants_cpp", [](int v, py::list children) {
-    //     std::vector<std::vector<int>> children_vec;
-    //     for (auto item : children) {
-    //         children_vec.push_back(item.cast<std::vector<int>>());
-    //     }
-    //     return compute_descendants(v, children_vec);
-    // }, "Compute all descendants of a node");
+    m.def("_link_reduce_vertices_cpp", &_link_reduce_vertices_cpp, "Alternative link reduce, iterating on vertices");
 }

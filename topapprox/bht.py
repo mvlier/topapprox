@@ -39,7 +39,7 @@ class BasinHierarchyTree():
     _low_pers_filter(epsilon)
         Applies a topological low-persistence filter to the tree, removing cycles with persistence lower than `epsilon`.
 
-    _lpf_size_filter(epsilon, size_gap=[0, np.inf])
+    _lpf_size_filter(epsilon, size_range=[0, np.inf])
         Filters basins based on their persistence and size, applying a threshold for both persistence and size.
 
     filter_branch(vertex, epsilon, modified)
@@ -92,19 +92,19 @@ class BasinHierarchyTree():
             self.filter_branch(vertex, self.epsilon, modified)
         return(modified)
     
-    def _lpf_size_filter(self, epsilon, size_gap = [0, np.inf]):
+    def _lpf_size_filter(self, epsilon, size_range = [0, np.inf]):
         """
         Applies the low persistence filter considering the size of the basins.
 
         This method modifies the 'birth' array by filtering vertices based on persistence
         and the size of their basins. Only basins whose sizes fall within the specified 
-        range (`size_gap`) and are bellow the specified threshold (`epsilon`) are processed.
+        range (`size_range`) and are bellow the specified threshold (`epsilon`) are processed.
 
         Parameters:
         ----------
         epsilon : float
             The threshold for the low persistence filter.
-        size_gap : list, optional
+        size_range : list, optional
             A two-element list specifying the minimum and maximum sizes of basins to 
             be filtered. The default range is [0, np.inf], meaning all basins are considered.
 
@@ -118,7 +118,7 @@ class BasinHierarchyTree():
         self.epsilon = epsilon
         modified = self.birth.copy()
         for vertex in self.persistent_children[self.root]:
-            self.filter_branch_with_size(vertex, self.epsilon, modified, size_gap=size_gap)
+            self.filter_branch_with_size(vertex, self.epsilon, modified, size_range=size_range)
         return(modified)
     
         
@@ -155,7 +155,7 @@ class BasinHierarchyTree():
                 self.filter_branch(child_vertex, epsilon, modified)
 
     
-    def filter_branch_with_size(self, vertex, epsilon, modified, *, size_gap=[0,np.inf]):
+    def filter_branch_with_size(self, vertex, epsilon, modified, *, size_range=[0,np.inf]):
         """
         filter branch considering basin size
         """
@@ -164,15 +164,15 @@ class BasinHierarchyTree():
         if  0 < persistence < epsilon:
             desc = np.array(self.get_descendants(vertex))
             size = len(desc)
-            if size_gap[0] <= size: 
-                if size <= size_gap[1]:
+            if size_range[0] <= size: 
+                if size <= size_range[1]:
                     modified[desc] = self.birth[linking_vertex]
                 else:
                     for child_vertex in self.persistent_children[vertex]:
-                        self.filter_branch_with_size(child_vertex, epsilon, modified, size_gap=size_gap)
+                        self.filter_branch_with_size(child_vertex, epsilon, modified, size_range=size_range)
         elif persistence >= epsilon:
             for child_vertex in self.persistent_children[vertex]:
-                self.filter_branch_with_size(child_vertex, epsilon, modified, size_gap=size_gap)
+                self.filter_branch_with_size(child_vertex, epsilon, modified, size_range=size_range)
 
 
     def basin_size(self, vertex):
