@@ -43,9 +43,10 @@ class TopologicalFilterImage(MethodLoaderMixin):
     
     # Changed cpp to python
     # changed vert
-    def __init__(self, img, *, method="cpp", dual=False, recursive=True, iter_vertex=False):
+    def __init__(self, img, *, method="cpp", dual=False, recursive=True, iter_vertex=True):
         self.shape = img.shape
-        self.method = self.load_method(method, __package__, iter_vertex=iter_vertex) # python, numba or C++
+        self.is_3D = len(self.shape) == 3
+        self.method = self.load_method(method, __package__, iter_vertex=iter_vertex, is_3D=self.is_3D) # python, numba or C++
         self.bht = BasinHierarchyTree(recursive=recursive)
         self.birth = img.ravel().copy() # filtration value for each vertex
         self.dual = dual
@@ -87,7 +88,7 @@ class TopologicalFilterImage(MethodLoaderMixin):
     def _update_BHT(self):
         '''Updates BHT via link_reduce method.
         One essential ingredient for obtaining the BHT is the '''
-        if self.iter_vertex:
+        if self.iter_vertex or self.is_3D:
             self.bht.parent, \
                 self.bht.children, \
                     self.bht.root, \

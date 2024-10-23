@@ -3,6 +3,7 @@ Basin Hierarchy Tree class
 '''
 
 import numpy as np
+import re
 
 
 class BasinHierarchyTree():
@@ -72,6 +73,7 @@ class BasinHierarchyTree():
         self.persistence = None
         self.recursive = recursive
         self.get_descendants = self.get_descendants_recursive if recursive else self.get_descendants_iterative
+        self._describe_pers = None
 
 
     def _low_pers_filter(self, epsilon):
@@ -216,14 +218,34 @@ class BasinHierarchyTree():
         # if not self.persistence is None:
         #     return self.persistence
 
-        #(birth, death, birth_location, death_location, basin_size)
-        self.persistence = np.array([[self.birth[v], self.birth[self.linking_vertex[v]], v, self.linking_vertex[v], self.basin_size(v)] for v in self.positive_pers])
+        #(birth, death, birth_location, death_location, basin_size, depth, height)
+        self.persistence = np.array([[self.birth[v], self.birth[self.linking_vertex[v]], v, 
+                                      self.linking_vertex[v], self.basin_size(v), self.get_depth(v), 
+                                      self.get_positive_pers_height(v)] for v in self.positive_pers])
+        self._describe_pers = """[birth, death, birth_vertex, death_vertex, basin_size, depth_in_BHT, height_in_BHT]
+
+            birth:..............birth time of cycle.
+            death:..............death time of cycle.
+            birth_vertex:.......vertex that initiated the cycle.
+            death_vertex:.......the linking vertex that killed the cycle by merging it with an older component.
+            basin_size:.........size of the cycle (number of vertices in the component before merging).
+            depth_in_BHT:.......the distance of the birth_vertex to the root of the BHT.
+            height_in_BHT:......the biggest distance from the birth_vertex to a leaf in the subtree of BHT 
+                                having only vertices with positive persistence."""
 
         if reduced==False:
-            permanent_interval = np.array([[self.birth[self.root], np.inf, self.root, -1, np.inf]])
+            permanent_interval = np.array([[self.birth[self.root], np.inf, self.root, -1, np.inf, self.get_depth(self.root), 
+                                      self.get_positive_pers_height(self.root)]])
             self.persistence = np.concatenate((self.persistence, permanent_interval))
         
         return self.persistence
+    
+    def describe_pers(self):
+        """
+        Prints the description of the persistence diagram obtained with `self.get_persistence()`.
+        """
+        print(self._describe_pers)
+
     
     def _get_BHT(self, *, with_children=False):
         """
@@ -313,3 +335,218 @@ class BasinHierarchyTree():
             stack.extend(self.children[current])  # Add children to the stack for further exploration
         
         return descendants
+
+    #TODO: maybe this part can be optimized
+    # One option is to directly include the computation of depth in the 
+    # link-reduce algorithm
+    def get_depth(self, vertex):
+        """
+        Returns the depth of `vertex` in the BHT.
+        The depth in this case is the distance to the root.
+        E.g., the root has depth 0, its children depth 1, 
+        grandchildren depth 2, and so on.
+
+        Parameter:
+        ---------
+        vertex : int
+                 The vertex for which to receive the depth
+        
+        Returns:
+        -------
+        int
+            The value of the depth of `vertex`
+        """
+        depth = 0
+        while self.parent[vertex] != vertex:
+            vertex = self.parent[vertex]
+            depth += 1
+        return depth
+    
+    #TODO: maybe this part can be optimized
+    # One option is to directly include the computation of depth in the 
+    # link-reduce algorithm
+    def get_height(self, vertex):
+        """
+        Returns the height of `vertex` in the BHT.
+        The height is the maximum distance from `vertex` to a leaf in the 
+        descendants of `vertex`.
+
+        E.g., leafs have height 0, vertices with all children being leafs
+        have height 1, and vertices with all children being leafs or vertices of 
+        height 1 have height 2.
+
+        Parameter:
+        ---------
+        vertex : int
+                 The vertex for which to compute the height
+
+        Returns:
+        -------
+        int
+            The value of the height of `vertex`
+        """
+        # If the vertex has no children, its height is 0 (leaf node)
+        if len(self.children[vertex]) == 0:
+            return 0
+        # Recursively compute the height of the vertex by finding the max height among its children
+        return 1 + max(self.get_height(child) for child in self.children[vertex])
+    
+    def get_positive_pers_height(self, vertex):
+        """
+        Returns the height of `vertex` in the subtree 
+        of positive persistence nodes of the BHT.
+
+        Parameter:
+        ---------
+        vertex : int
+                 The vertex for which to compute the height
+
+        Returns:
+        -------
+        int
+            The value of the height of `vertex`
+        """
+        # If the vertex has no children, its height is 0 (leaf node)
+        if len(self.persistent_children[vertex]) == 0:
+            return 0
+        # Recursively compute the height of the vertex by finding the max height among its children
+        return 1 + max(self.get_positive_pers_height(child) for child in self.persistent_children[vertex])
+    
+    
+    ################################################################################
+    #                         \_____________|____________/                         #
+    #_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_|SUMMARY STATISTICS METHODS|_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_#
+    #                         /‾‾‾‾‾‾‾‾‾‾‾‾‾|‾‾‾‾‾‾‾‾‾‾‾‾\                         #
+    ################################################################################
+
+    def check_persistence_exists(self):
+        '''
+        Checks if the persistence diagram was already computed and
+        is stored in `self.persistence`, if not it calls the `get_persistence`
+        method, to compute the persistence diagram and store it.
+        '''
+
+        if self.persistence is None:
+            _ = self.get_persistence()
+
+
+    def _get_weight(self, weight_name):
+        '''
+        Weight functions for computing the depth and height distributions.
+
+        Parameter:
+        ---------
+        weight_name: None or str or np.ndarray
+        '''
+        pd = self.persistence
+        if weight_name is None:
+            return 1
+        elif isinstance(weight_name, np.ndarray):
+            return weight_name
+        elif weight_name == "basin_size":
+            return pd[:,4]
+        elif weight_name == "persistence":
+            return np.diff(pd[:,0:2])
+        elif weight_name == "basin_size_x_persistence":
+            return np.diff(pd[:,0:2])*pd[:,4]
+        elif len(weight_name)>24 and weight_name[:24] == "basin_size_+_persistence":
+            pattern = r"basin_size_\+_persistence\(([\d.]+),([\d.]+)\)"
+            match = re.search(pattern, weight_name)
+            if match:
+                a = float(match.group(1))
+                b = float(match.group(2))
+                return a*pd[:,4] + b*np.diff(pd[:,0:2])
+            else:
+                raise ValueError(f"Expected the end of the string to be '(number1, number2)', but received {weight_name[24:]}")
+            
+
+
+
+    def depth_distribution(self, *, depth_range=None, ratio=False, weight=None):
+        '''
+        Returns a numpy array of shape (n,)
+        in which the i-th entry (array[i]) corresponds to the 
+        total number of persistence intervals with depth i+1.
+
+        E.g.,
+        [depth==1, depth==2, ..., depth==n]
+
+        If `depth_range` is not None, then the returned numpy array
+        has the shape (depth_range[1]-depth_range[0]) and 
+        is of the following form:
+
+        [depth==depth_range[0], depth==depth_range[0]+1, ..., depth==depth_range[1]]
+
+        Parameter:
+        ---------
+        depth_range: tuple of length 2
+                     lower and upper bound for the depths to be included in the depth
+                     distribution array.
+        ratio: bool
+               if True, the distribution is converted to a ratio, thus the i-th entry
+               represents the percentage of elements with that depth.
+        weight: str
+                the name of the weight to be used. If None, the weight is det to be
+                constant equal to 1. 
+                Other options are:
+                                "basin_size":  weight by basin size of cycle
+                                "persistence": weight by persistence of cycle
+        
+        Returns:
+        -------
+        depth_distr: np.ndarray
+                    An array containing the number of intervals in the persistence diagram
+                    for each depth in the range `depth_range`.
+        '''
+        self.check_persistence_exists()
+        pd = self.persistence
+        weight = self._get_weight(weight)
+        if depth_range is None:
+            depth_range = [1, int(np.max(pd[:,5]))] # standard range
+        depth_distr =  np.array([np.sum((pd[:,5] == i)*weight) 
+                         for i in range(depth_range[0], depth_range[1]+1)])
+        N = np.sum(depth_distr) if ratio else 1
+        return depth_distr/N
+    
+
+    def height_distribution(self, *, height_range=None, ratio=False, weight=None):
+        '''
+        Returns a numpy array of shape (n,)
+        in which the i-th entry (array[i]) corresponds to the 
+        total number of persistence intervals with height i.
+
+        E.g.,
+        [height==0, height==1, ..., height==n]
+
+        If `height_range` is not None, then the returned numpy array
+        has the shape (height_range[1]-height_range[0]) and 
+        is of the following form:
+
+        [height==height_range[0], height==height_range[0]+1, ..., height==height_range[1]]
+
+        Parameter:
+        ---------
+        height_range: tuple of length 2
+                     lower and upper bound for the heights to be included in the height
+                     distribution array.
+        ratio: bool
+               if True, the distribution is converted to a ratio, thus the i-th entry
+               represents the percentage of elements with that height.
+        
+        Returns:
+        -------
+        height_distribution: np.ndarray
+                            An array containing the number of intervals in the persistence diagram
+                            for each height in the range `height_range`.
+        '''
+        self.check_persistence_exists()
+        pd = self.persistence
+        weight = self._get_weight(weight)
+        if height_range is None:
+            height_range = [0, int(np.max(pd[:,6]))] # standard range
+        height_distr = np.array([np.sum((pd[:,6] == i)*weight) 
+                         for i in range(height_range[0], height_range[1]+1)])
+        N = np.sum(height_distr) if ratio else 1
+        return height_distr/N
+
+

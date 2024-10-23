@@ -2,7 +2,12 @@ import importlib
 import warnings
 
 class MethodLoaderMixin:
-    def load_method(self, method, package, *, iter_vertex=False):
+    def load_method(self, method, package, *, iter_vertex=False, is_3D=False):
+        if is_3D:
+            module = importlib.import_module('.link_reduce_cpp', package=package)
+            self._link_reduce = getattr(module, '_link_reduce_vertices_cpp_3D')
+            return method
+
         if method == "cpp":
             try:
                 module = importlib.import_module('.link_reduce_cpp', package=package)
