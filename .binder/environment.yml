@@ -3,9 +3,10 @@ channels:
   - conda-forge
 dependencies:
   - python >=3.8
-  - matplotlib
+  - matplotlib-base
   - networkx
   - numba
   - numpy
   - persim
+  - scikit-image
   - seaborn
