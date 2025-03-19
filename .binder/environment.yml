@@ -1,18 +1,15 @@
 name: default
 channels:
   - conda-forge
-  - nodefaults
 dependencies:
+  - python >= 3.8
   - cripser
-  - itertools
   - jupyterlab
   - matplotlib
   - networkx
   - numba
-  - numpy
+  - numpy=2.1
   - persim
-  - python
   - seaborn
   - skimage
-  - scipy
   - warnings
