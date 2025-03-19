@@ -1,0 +1,18 @@
+name: default
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - cripser
+  - itertools
+  - jupyterlab
+  - matplotlib
+  - networkx
+  - numba
+  - numpy
+  - persim
+  - python >=3.10
+  - seaborn
+  - skimage
+  - scipy
+  - warnings
