@@ -3,3 +3,11 @@ channels:
   - conda-forge
 dependencies:
   - python==3.8
+  - cripser
+  - matplotlib
+  - networkx
+  - numpy
+  - persim
+  - seaborn
+  - skimage
+  - warnings
