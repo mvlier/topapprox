@@ -11,7 +11,7 @@ dependencies:
   - numba
   - numpy
   - persim
-  - python >=3.10
+  - python
   - seaborn
   - skimage
   - scipy
