@@ -18,6 +18,8 @@ MIT License
 
 ## Get Started
 
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/mvlier/topapprox/binder_setup?urlpath=%2Fdoc%2Ftree%2FInteractive_Tutorial_topapprox.ipynb)
+
 - Look at the tutorial [click here](Interactive_Tutorial_topapprox.ipynb).
 - Examples in our [paper](https://arxiv.org/abs/2408.14109) are reproduced [here](https://github.com/mvlier/topapprox/blob/main/Paper%20examples/Reproducing_paper_examples.ipynb)
 
