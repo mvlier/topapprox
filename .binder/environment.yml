@@ -7,7 +7,7 @@ dependencies:
   - jupyterlab
   - matplotlib
   - networkx
-  - numba==0.60.0
+  - numpy
   - persim
   - seaborn
   - skimage
