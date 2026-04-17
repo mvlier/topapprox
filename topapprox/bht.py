@@ -517,6 +517,81 @@ class BasinHierarchyTree():
     
     ################################################################################
     #                         \_____________|____________/                         #
+    #_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_|  BASIN MAP METHODS  |_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_#
+    #                         /‾‾‾‾‾‾‾‾‾‾‾‾‾|‾‾‾‾‾‾‾‾‾‾‾‾\                         #
+    ################################################################################
+
+    def basin_map(self, epsilon=0):
+        """Assign each vertex the birth value of its deepest surviving basin.
+
+        A basin "survives" at threshold *epsilon* if its persistence >= epsilon.
+        Parent basins have earlier (lower) birth values than their children, so
+        mapping birth values to a sequential colormap naturally produces stronger
+        (darker / more saturated) colours for parents and lighter colours for
+        children.  The colour gap between a parent and its child is proportional
+        to the persistence of the child basin.
+
+        Parameters
+        ----------
+        epsilon : float, optional
+            Persistence threshold.  Basins with persistence < epsilon are merged
+            into their parent.  Default 0 (show every positive-persistence basin).
+
+        Returns
+        -------
+        labels : np.ndarray
+            Array of length ``len(self.birth)``.  ``labels[v]`` is the birth
+            value of the basin representative that vertex *v* belongs to.
+        """
+        if self.birth is None or self.root is None:
+            return np.array([])
+        n = len(self.birth)
+        labels = np.full(n, self.birth[self.root])
+        self._label_basin(self.root, epsilon, labels)
+        return labels
+
+    def basin_representative_map(self, epsilon=0):
+        """Like :meth:`basin_map` but returns basin representative vertex indices.
+
+        Parameters
+        ----------
+        epsilon : float, optional
+            Persistence threshold (default 0).
+
+        Returns
+        -------
+        reps : np.ndarray
+            ``reps[v]`` is the vertex index of the basin representative for *v*.
+        """
+        if self.birth is None or self.root is None:
+            return np.array([], dtype=np.int64)
+        n = len(self.birth)
+        reps = np.full(n, self.root, dtype=np.int64)
+        self._label_basin_rep(self.root, epsilon, reps)
+        return reps
+
+    def _label_basin(self, vertex, epsilon, labels):
+        """Recursively label descendants with basin birth values (top-down)."""
+        for child in self.persistent_children[vertex]:
+            linking_v = self.linking_vertex[child]
+            pers = self.birth[linking_v] - self.birth[child]
+            if pers >= epsilon:
+                desc = self.get_descendants(child)
+                labels[np.array(desc)] = self.birth[child]
+                self._label_basin(child, epsilon, labels)
+
+    def _label_basin_rep(self, vertex, epsilon, reps):
+        """Recursively label descendants with basin representative indices."""
+        for child in self.persistent_children[vertex]:
+            linking_v = self.linking_vertex[child]
+            pers = self.birth[linking_v] - self.birth[child]
+            if pers >= epsilon:
+                desc = self.get_descendants(child)
+                reps[np.array(desc)] = child
+                self._label_basin_rep(child, epsilon, reps)
+
+    ################################################################################
+    #                         \_____________|____________/                         #
     #_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_|SUMMARY STATISTICS METHODS|_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_#
     #                         /‾‾‾‾‾‾‾‾‾‾‾‾‾|‾‾‾‾‾‾‾‾‾‾‾‾\                         #
     ################################################################################

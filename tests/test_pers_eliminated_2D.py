@@ -8,11 +8,11 @@ For testing we use images and pre computed persistence diagrams
 
 import pytest
 import numpy as np
-from topapprox import TopologicalFilterImage, TopologicalFilterGraph
-import cripser
+from topapprox import ImageFilter, available_backends
 import time
 from datetime import datetime
 
+cripser = pytest.importorskip("cripser")
 
 
 def test_pagoda():
@@ -60,12 +60,12 @@ def check_pers_and_norm(name, epsilon, method, *, location = "tests/data_for_tes
     '''
     img = np.load(location + name)
     t0 = time.time()
-    uf = TopologicalFilterImage(img, method=method)
+    uf = ImageFilter(img, method=method)
     img_filtered_H0 = uf.low_pers_filter(epsilon)
     t1 = time.time()
     print_benchmark(name, epsilon, method, t0, t1, 0)
     t0 = time.time()
-    uf_dual = TopologicalFilterImage(img, dual=True, method=method)
+    uf_dual = ImageFilter(img, dual=True, method=method)
     img_filtered_H1 = uf_dual.low_pers_filter(epsilon)
     t1 = time.time()
     print_benchmark(name, epsilon, method, t0, t1, 1)
@@ -86,7 +86,7 @@ def check_all_methods(name, epsilon, *, location = "tests/data_for_testing/"):
     Apart from checking that all methods are giving results within epsilon from the original
     function, it also checks that each method gives the same result as.
     '''
-    list_methods = ["python", "numba", "cpp"]
+    list_methods = available_backends()
     filtered_dict = {}
     for method in list_methods:
         filtered_dict[method] = check_pers_and_norm(name, epsilon, method=method, location = location)
@@ -98,7 +98,7 @@ def check_all_methods(name, epsilon, *, location = "tests/data_for_testing/"):
     #         '''
 
 
-def print_benchmark(name, epsilon, method, t0, t1, H_idx, *, save=True):
+def print_benchmark(name, epsilon, method, t0, t1, H_idx, *, save=False):
     # Prepare the message with the current date and time
     file_path = "tests/benchmark_log.txt"
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

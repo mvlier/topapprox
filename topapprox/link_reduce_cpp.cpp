@@ -1,415 +1,330 @@
-#include <vector>
 #include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstring>
 #include <numeric>
-#include <limits>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
-#include <pybind11/numpy.h>
-#include <iostream>  // For debugging
 
 namespace py = pybind11;
 
-// Function to compute the root/ancestor
-int compute_root(int v, std::vector<int>& ancestor) {
-    if (ancestor[v] == v) {
-        return v;
+namespace {
+
+using Index = std::int64_t;
+using Birth = double;
+using Children = std::vector<std::vector<Index>>;
+
+struct LinkReduceResult {
+    std::vector<Index> parent;
+    Children children;
+    Index root;
+    std::vector<Index> linking_vertex;
+    Children persistent_children;
+    std::vector<Index> positive_pers;
+};
+
+Index compute_root(Index vertex, std::vector<Index>& ancestor) {
+    if (ancestor[vertex] == vertex) {
+        return vertex;
     }
-    ancestor[v] = compute_root(ancestor[v], ancestor);
-    return ancestor[v];
+    ancestor[vertex] = compute_root(ancestor[vertex], ancestor);
+    return ancestor[vertex];
 }
 
-// // Function to compute all descendants of a node
-// void descendants(int v, const std::vector<std::vector<int>>& children, std::vector<int>& desc) {
-//     desc.push_back(v);  // Add the current node to the descendants
-//     for (int child : children[v]) {  // Recursively find the descendants
-//         descendants(child, children, desc);
-//     }
-// }
+template <typename T>
+py::array_t<T> vector_to_array(const std::vector<T>& values) {
+    py::array_t<T> array(values.size());
+    auto mutable_view = array.template mutable_unchecked<1>();
+    for (py::ssize_t index = 0; index < mutable_view.shape(0); ++index) {
+        mutable_view(index) = values[static_cast<std::size_t>(index)];
+    }
+    return array;
+}
 
-// // Function to compute the descendants of a node
-// std::vector<int> compute_descendants(int v, const std::vector<std::vector<int>>& children) {
-//     std::vector<int> desc;
-//     descendants(v, children, desc);
-//     return desc;
-// }
+std::vector<std::array<Index, 2>> copy_edges(
+    const py::array_t<Index, py::array::c_style | py::array::forcecast>& edges
+) {
+    auto view = edges.unchecked<2>();
+    if (view.shape(1) != 2) {
+        throw std::runtime_error("Edges must have shape (n, 2).");
+    }
 
-// The main link and reduce function
-std::tuple<std::vector<int>, std::vector<std::vector<int>>, int, std::vector<int>, std::vector<std::vector<int>>, std::vector<int>>
-_link_reduce_cpp(const std::vector<double>& birth, const std::vector<std::vector<int>>& edges, double epsilon, bool keep_basin = false) {
-    
-    std::vector<int> parent(birth.size());
-    std::iota(parent.begin(), parent.end(), 0);  // Initialize the parent array
-    std::vector<int> ancestor(birth.size());
-    std::iota(ancestor.begin(), ancestor.end(), 0);  // Initialize the ancestor array
-    std::vector<int> linking_vertex(birth.size(), -1);
-    int root = 0;
-    // int n_pers = 1; // number of persistent intervals (starting at 1 to count the permanent cycle)
+    std::vector<std::array<Index, 2>> copied;
+    copied.reserve(static_cast<std::size_t>(view.shape(0)));
+    for (py::ssize_t row = 0; row < view.shape(0); ++row) {
+        copied.push_back({view(row, 0), view(row, 1)});
+    }
+    return copied;
+}
 
-    std::vector<std::vector<int>> children(birth.size());  // Initialize the children array
-    std::vector<std::vector<int>> persistent_children(birth.size());  // Track children with non-zero persistence
-    // std::vector<double> modified = birth;  // Copy the birth array
-    std::vector<int> positive_pers; // List to store the positive persistence vertices apart from root
+LinkReduceResult link_reduce_edges(
+    const py::array_t<Birth, py::array::c_style | py::array::forcecast>& birth,
+    const py::array_t<Index, py::array::c_style | py::array::forcecast>& edges
+) {
+    auto birth_view = birth.unchecked<1>();
+    const auto copied_edges = copy_edges(edges);
+    const auto size = static_cast<std::size_t>(birth_view.shape(0));
 
-    for (const auto& edge : edges) {
-        int ui = edge[0];
-        int vi = edge[1];
-        // Find parents of u and v
-        int up = compute_root(ui, ancestor);
-        int vp = compute_root(vi, ancestor);
-        double death = std::max(birth[ui], birth[vi]);
+    LinkReduceResult result;
+    result.parent = std::vector<Index>(size);
+    result.children = Children(size);
+    result.root = 0;
+    result.linking_vertex = std::vector<Index>(size, -1);
+    result.persistent_children = Children(size);
+    std::iota(result.parent.begin(), result.parent.end(), 0);
+    auto ancestor = result.parent;
 
-        if (up != vp) {  // If their connected components are different
-            if (birth[up] < birth[vp]) {
-                std::swap(up, vp);  // up is the younger and to be killed
-            }
+    for (const auto& edge : copied_edges) {
+        const auto first = edge[0];
+        const auto second = edge[1];
+        auto first_root = compute_root(first, ancestor);
+        auto second_root = compute_root(second, ancestor);
+        const auto death = std::max(birth_view(first), birth_view(second));
 
-            // Tree structure
-            children[vp].push_back(up);
-            parent[up] = vp;
-            ancestor[up] = vp;
-            root = vp;  // By the end of the loop, root will store the only vertex that is its own parent
+        if (first_root == second_root) {
+            continue;
+        }
 
-            linking_vertex[up] = (birth[ui] > birth[vi]) ? ui : vi;
+        if (birth_view(first_root) < birth_view(second_root)) {
+            std::swap(first_root, second_root);
+        }
 
-            if (birth[up] < death) {  // A cycle is produced
-                persistent_children[vp].push_back(up);
-                positive_pers.push_back(up);
+        result.children[second_root].push_back(first_root);
+        result.parent[first_root] = second_root;
+        ancestor[first_root] = second_root;
+        result.root = second_root;
+        result.linking_vertex[first_root] = birth_view(first) > birth_view(second) ? first : second;
+
+        if (birth_view(first_root) < death) {
+            result.persistent_children[second_root].push_back(first_root);
+            result.positive_pers.push_back(first_root);
+        }
+    }
+
+    return result;
+}
+
+std::vector<Index> neighbors_2d(Index vertex, Index n_rows, Index n_cols, bool dual, Index extra_vertex) {
+    const auto row = vertex / n_cols;
+    const auto col = vertex % n_cols;
+    const bool top = row == 0;
+    const bool bottom = row == n_rows - 1;
+    const bool left = col == 0;
+    const bool right = col == n_cols - 1;
+    const Index invalid = n_rows * n_cols + (dual ? 1 : 0);
+
+    std::vector<Index> neighbors = {
+        left ? invalid : vertex - 1,
+        right ? invalid : vertex + 1,
+        top ? invalid : vertex - n_cols,
+        bottom ? invalid : vertex + n_cols,
+    };
+    if (!dual) {
+        return neighbors;
+    }
+
+    neighbors.push_back((top || left) ? extra_vertex : vertex - n_cols - 1);
+    neighbors.push_back((bottom || right) ? extra_vertex : vertex + n_cols + 1);
+    neighbors.push_back((top || right) ? invalid : vertex - n_cols + 1);
+    neighbors.push_back((bottom || left) ? invalid : vertex + n_cols - 1);
+    return neighbors;
+}
+
+std::vector<Index> neighbors_3d(
+    Index vertex,
+    Index n_x,
+    Index n_y,
+    Index n_z,
+    bool dual,
+    Index extra_vertex
+) {
+    const Index invalid = n_x * n_y * n_z + (dual ? 1 : 0);
+    const auto x = vertex / (n_y * n_z);
+    const auto y = (vertex / n_z) % n_y;
+    const auto z = vertex % n_z;
+
+    const std::array<bool, 6> on_boundary = {
+        x == 0,
+        x == n_x - 1,
+        y == 0,
+        y == n_y - 1,
+        z == 0,
+        z == n_z - 1,
+    };
+    const std::array<Index, 6> delta = {
+        -n_y * n_z,
+        n_y * n_z,
+        -n_z,
+        n_z,
+        -1,
+        1,
+    };
+
+    std::vector<Index> neighbors;
+    neighbors.reserve(dual ? 27 : 6);
+    for (std::size_t axis = 0; axis < on_boundary.size(); ++axis) {
+        neighbors.push_back(on_boundary[axis] ? invalid : vertex + delta[axis]);
+    }
+
+    if (!dual) {
+        return neighbors;
+    }
+
+    for (std::size_t first = 0; first < on_boundary.size(); ++first) {
+        for (std::size_t second = first + 1 + ((first + 1) % 2); second < on_boundary.size(); ++second) {
+            neighbors.push_back((on_boundary[first] || on_boundary[second]) ? invalid : vertex + delta[first] + delta[second]);
+            for (std::size_t third = second + 1 + ((second + 1) % 2); third < on_boundary.size(); ++third) {
+                neighbors.push_back(
+                    (on_boundary[first] || on_boundary[second] || on_boundary[third])
+                        ? invalid
+                        : vertex + delta[first] + delta[second] + delta[third]
+                );
             }
         }
     }
 
-    return std::make_tuple(parent, children, root, linking_vertex, persistent_children, positive_pers);
+    const bool touches_boundary = std::any_of(on_boundary.begin(), on_boundary.end(), [](bool value) { return value; });
+    neighbors.push_back(touches_boundary ? extra_vertex : invalid);
+    return neighbors;
 }
 
-// Wrapper function to interface with Python
-py::tuple link_reduce_wrapper(py::array_t<double> birth, py::array_t<int> edges, double epsilon, bool keep_basin = false) {
-    // Convert numpy array to std::vector
-    std::vector<double> birth_vec(birth.data(), birth.data() + birth.size());
+template <typename NeighborFn>
+LinkReduceResult link_reduce_grid(
+    const py::array_t<Birth, py::array::c_style | py::array::forcecast>& birth,
+    Index size,
+    NeighborFn&& compute_neighbors
+) {
+    auto birth_view = birth.unchecked<1>();
 
-    // Get buffer info of the edges array
-    py::buffer_info edges_buf = edges.request();
-
-    // Check if it's a 2D array
-    if (edges_buf.ndim != 2 || edges_buf.shape[1] != 2) {
-        throw std::runtime_error("Edges must be a 2D array with two columns");
-    }
-
-    // Convert numpy array to std::vector<std::vector<int>>
-    std::vector<std::vector<int>> edges_converted(edges_buf.shape[0], std::vector<int>(2));
-    int* edges_ptr = static_cast<int*>(edges_buf.ptr);
-    for (size_t i = 0; i < edges_converted.size(); ++i) {
-        edges_converted[i][0] = edges_ptr[i * 2];
-        edges_converted[i][1] = edges_ptr[i * 2 + 1];
-    }
-
-    // Call the C++ function
-    auto result = _link_reduce_cpp(birth_vec, edges_converted, epsilon, keep_basin);
-
-    // Convert the result back to Python objects
-    py::list result_list;
-
-    // // Convert std::vector<double> to numpy array
-    // const auto& modified = std::get<0>(result);
-    // py::array_t<double> modified_array(modified.size(), modified.data());
-    // result_list.append(modified_array);
-
-    // Convert std::vector<int> parent to numpy array
-    const auto& parent = std::get<0>(result);
-    py::array_t<int> parent_array(parent.size(), parent.data());
-    result_list.append(parent_array);
-
-    // Convert children (vector of vectors) to Python list
-    const auto& children = std::get<1>(result);
-    py::list children_list;
-    for (const auto& child_vec : children) {
-        children_list.append(py::cast(child_vec));
-    }
-    result_list.append(children_list);
-
-    // Append root, linking_vertex, and persistent_children
-    result_list.append(py::cast(std::get<2>(result)));  // root
-    result_list.append(py::array_t<int>(std::get<3>(result).size(), std::get<3>(result).data()));  // linking_vertex
-    py::list persistent_children_list;
-    for (const auto& pchild_vec : std::get<4>(result)) {
-        persistent_children_list.append(py::cast(pchild_vec));
-    }
-    result_list.append(persistent_children_list);
-    result_list.append(py::array_t<int>(std::get<5>(result).size(), std::get<5>(result).data()));  // positive_pers
-
-
-    return py::tuple(result_list);
-}
-
-// computes neighbor vertices of a vertex v in an image
-// std::vector<int> neighbors(int v, std::pair<int, int> shape) {
-//     int n = shape.first;
-//     int m = shape.second;
-//     std::vector<int> nbs(4, -1);
-    
-//     nbs[0] = (v % m == 0) ? -1 : v - 1;             // Left neighbor
-//     nbs[1] = (v % m == m - 1) ? -1 : v + 1;         // Right neighbor
-//     nbs[2] = (v < m) ? -1 : v - m;                  // Upper neighbor
-//     nbs[3] = (v > (n - 1) * m - 1) ? -1 : v + m;    // Lower neighbor
-    
-//     return nbs;
-// }
-
-void neighbors(int v, std::pair<int, int> shape, std::vector<int>& nbs, bool dual, int& size, int& extra_vertex) {
-    int n = shape.first;
-    int m = shape.second;
-    int row = v / m;
-    int col = v % m;
-    bool top = (row==0), bottom = (row==n-1); 
-    bool left = (col==0), right = (col==m-1);
-    
-    // Update the values in the preallocated nbs vector
-    nbs[0] = left ? size : v - 1;          // Left neighbor
-    nbs[1] = right ? size : v + 1;         // Right neighbor
-    nbs[2] = top ? size : v - m;           // Upper neighbor
-    nbs[3] = bottom ? size : v + m;        // Lower neighbor
-
-    if (dual) {
-        nbs[4] = top || left ? extra_vertex : v - m - 1;
-        nbs[5] = bottom || right ? extra_vertex : v + m + 1;
-        nbs[6] = top || right ? size : v - m + 1;
-        nbs[7] = bottom || left ? size : v + m - 1;
-    }
-}
-
-
-void neighbors_3D(int v, std::tuple<int, int, int> shape, std::vector<int>& nbs, bool dual, int& size, int& extra_vertex) {
-    int n = std::get<0>(shape);
-    int m = std::get<1>(shape);
-    int l = std::get<2>(shape);
-    int i = v / (m * l);
-    int j = (v / l) % m;
-    int k = v % l;
-    std::vector<bool> condition = {i==0, i==n-1, j==0, j==m-1, k==0, k==l-1};
-    std::vector<int> increment = {-m*l, m*l, -l, l, -1, 1};
-
-    int idx;
-    for (idx=0; idx<6; ++idx){
-        nbs[idx] = condition[idx] ? size : v + increment[idx];
-    }
-
-    if (dual) {
-        for (int idx2=0; idx2<6; ++idx2){
-            for (int idx3 = idx2 + 1 + (idx2+1)%2; idx3<6; ++idx3){
-                nbs[idx] = (condition[idx2] || condition[idx3]) ? size : v + increment[idx2] + increment[idx3];
-                ++idx;
-                for (int idx4 = idx3 + 1 + (idx3+1)%2; idx4<6; ++idx4){
-                    nbs[idx] = (condition[idx2] || condition[idx3] || condition[idx4]) ? size : v + increment[idx2] + increment[idx3] + increment[idx4];
-                    ++idx;
-                }
-            }
-        }
-        nbs[idx] = std::any_of(condition.begin(), condition.end(), [](bool val) { return val; }) ? extra_vertex : size;
-    }
-}
-
-
-
-// Alternative version of link and reduce function iterating over vertices
-py::tuple _link_reduce_vertices_cpp(py::array_t<float> birth, std::pair<int, int> shape, bool dual) {
-    auto birth_unchecked = birth.unchecked<1>();  // Access elements as float
-    int size = birth.size();
-    int extra_vertex = size - 1; // only used if dual==True
-
-    std::vector<int> vertices_ordered(size);
-    std::iota(vertices_ordered.begin(), vertices_ordered.end(), 0);
-    std::sort(vertices_ordered.begin(), vertices_ordered.end(), [&](int a, int b) {
-        return birth_unchecked(a) < birth_unchecked(b);
+    std::vector<Index> ordered_vertices(size);
+    std::iota(ordered_vertices.begin(), ordered_vertices.end(), 0);
+    std::sort(ordered_vertices.begin(), ordered_vertices.end(), [&](Index left, Index right) {
+        return birth_view(left) < birth_view(right);
     });
 
-    // std::vector<int> vertex_birth_index(size);
-    // for (int i = 0; i < size; ++i) {
-    //     vertex_birth_index[vertices_ordered[i]] = i;
-    // }
+    LinkReduceResult result;
+    result.parent = std::vector<Index>(static_cast<std::size_t>(size));
+    result.children = Children(static_cast<std::size_t>(size));
+    result.root = 0;
+    result.linking_vertex = std::vector<Index>(static_cast<std::size_t>(size), -1);
+    result.persistent_children = Children(static_cast<std::size_t>(size));
+    std::iota(result.parent.begin(), result.parent.end(), 0);
+    auto ancestor = result.parent;
 
-    std::vector<int> parent(size);
-    std::iota(parent.begin(), parent.end(), 0);  // Parent initialized to identity
-    std::vector<int> ancestor = parent;
-    std::vector<int> linking_vertex(size, -1);
-    int root = 0;
-    std::vector<int> positive_pers;
-    std::vector<std::vector<int>> children(size);
-    std::vector<std::vector<int>> persistent_children(size);
+    for (const auto vertex : ordered_vertices) {
+        for (const auto neighbor : compute_neighbors(vertex)) {
+            if (neighbor >= size) {
+                continue;
+            }
+            if (birth_view(neighbor) > birth_view(vertex)) {
+                continue;
+            }
 
-    int n_neighbors = 4;
-    if (dual) {
-        n_neighbors = 8;
-    }
-    
-    std::vector<int> nbs(n_neighbors, -1);
+            auto neighbor_root = compute_root(neighbor, ancestor);
+            auto vertex_root = compute_root(vertex, ancestor);
+            if (neighbor_root == vertex_root) {
+                continue;
+            }
 
-    for (const auto& v : vertices_ordered) {
-        neighbors(v, shape, nbs, dual, size, extra_vertex);
-        for (int u : nbs) {
-            if (u < size && birth_unchecked(u) <= birth_unchecked(v)) {
-                int up = compute_root(u, ancestor);
-                int vp = compute_root(v, ancestor);
+            if (birth_view(neighbor_root) < birth_view(vertex_root)) {
+                std::swap(neighbor_root, vertex_root);
+            }
 
-                if (up != vp) {
-                    if (birth_unchecked(up) < birth_unchecked(vp)) {
-                        std::swap(up, vp);
-                    }
+            result.children[vertex_root].push_back(neighbor_root);
+            result.parent[neighbor_root] = vertex_root;
+            ancestor[neighbor_root] = vertex_root;
+            result.root = vertex_root;
+            result.linking_vertex[neighbor_root] = vertex;
 
-                    children[vp].push_back(up);
-                    parent[up] = vp;  // Update the parent
-                    ancestor[up] = vp;  // Update the ancestor
-                    root = vp;  // Set root to vp
-                    linking_vertex[up] = v;  // Track linking vertex
-
-                    
-                    if (birth_unchecked(up) < birth_unchecked(v)) {
-                        persistent_children[vp].push_back(up);
-                        positive_pers.push_back(up);
-                    }
-                }
+            if (birth_view(neighbor_root) < birth_view(vertex)) {
+                result.persistent_children[vertex_root].push_back(neighbor_root);
+                result.positive_pers.push_back(neighbor_root);
             }
         }
     }
 
-    py::list children_list;
-    for (const auto& child_vec : children) {
-        py::list child_pylist;
-        for (const auto& c : child_vec) {
-            child_pylist.append(c);
-        }
-        children_list.append(child_pylist);
-    }
+    return result;
+}
 
-    py::list persistent_children_list;
-    for (const auto& p_child_vec : persistent_children) {
-        py::list p_child_pylist;
-        for (const auto& pc : p_child_vec) {
-            p_child_pylist.append(pc);
-        }
-        persistent_children_list.append(p_child_pylist);
-    }
-
+py::tuple to_python_tuple(const LinkReduceResult& result) {
     return py::make_tuple(
-        py::array_t<int>(parent.size(), parent.data()),
-        children_list,
-        root,
-        py::array_t<int>(linking_vertex.size(), linking_vertex.data()),
-        persistent_children_list,
-        py::array_t<int>(positive_pers.size(), positive_pers.data())
+        vector_to_array(result.parent),
+        py::cast(result.children),
+        result.root,
+        vector_to_array(result.linking_vertex),
+        py::cast(result.persistent_children),
+        vector_to_array(result.positive_pers)
     );
 }
 
+}  // namespace
 
-
-
-
-
-
-
-
-// 3D version of link and reduce function iterating over vertices
-py::tuple _link_reduce_vertices_cpp_3D(py::array_t<float> birth, std::tuple<int, int, int> shape, bool dual) {
-    auto birth_unchecked = birth.unchecked<1>();  // Access elements as float
-    int size = birth.size();
-    int extra_vertex = size - 1; // only used if dual==True
-
-    std::vector<int> vertices_ordered(size);
-    std::iota(vertices_ordered.begin(), vertices_ordered.end(), 0);
-    std::sort(vertices_ordered.begin(), vertices_ordered.end(), [&](int a, int b) {
-        return birth_unchecked(a) < birth_unchecked(b);
-    });
-
-    // std::vector<int> vertex_birth_index(size);
-    // for (int i = 0; i < size; ++i) {
-    //     vertex_birth_index[vertices_ordered[i]] = i;
-    // }
-
-    std::vector<int> parent(size);
-    std::iota(parent.begin(), parent.end(), 0);  // Parent initialized to identity
-    std::vector<int> ancestor = parent;
-    std::vector<int> linking_vertex(size, -1);
-    int root = 0;
-    std::vector<int> positive_pers;
-    std::vector<std::vector<int>> children(size);
-    std::vector<std::vector<int>> persistent_children(size);
-
-    int n_neighbors = 6;
-    if (dual) {
-        n_neighbors = 27;
-    }
-    
-    std::vector<int> nbs(n_neighbors, -1);
-
-    for (const auto& v : vertices_ordered) {
-        neighbors_3D(v, shape, nbs, dual, size, extra_vertex);
-        for (int u : nbs) {
-            if (u < size && birth_unchecked(u) <= birth_unchecked(v)) {
-                int up = compute_root(u, ancestor);
-                int vp = compute_root(v, ancestor);
-
-                if (up != vp) {
-                    if (birth_unchecked(up) < birth_unchecked(vp)) {
-                        std::swap(up, vp);
-                    }
-
-                    children[vp].push_back(up);
-                    parent[up] = vp;  // Update the parent
-                    ancestor[up] = vp;  // Update the ancestor
-                    root = vp;  // Set root to vp
-                    linking_vertex[up] = v;  // Track linking vertex
-
-                    // Debugging
-                    // std::cout << vp << "," << up << std::endl;
-                    // std::cout << "birth up: " << birth_unchecked(up) << std::endl;
-                    // std::cout << "birth v: " << birth_unchecked(v) << std::endl << std::endl;
-                    if (birth_unchecked(up) < birth_unchecked(v)) {
-                        persistent_children[vp].push_back(up);
-                        positive_pers.push_back(up);
-                    }
-                }
-            }
-        }
-    }
-
-    py::list children_list;
-    for (const auto& child_vec : children) {
-        py::list child_pylist;
-        for (const auto& c : child_vec) {
-            child_pylist.append(c);
-        }
-        children_list.append(child_pylist);
-    }
-
-    py::list persistent_children_list;
-    for (const auto& p_child_vec : persistent_children) {
-        py::list p_child_pylist;
-        for (const auto& pc : p_child_vec) {
-            p_child_pylist.append(pc);
-        }
-        persistent_children_list.append(p_child_pylist);
-    }
-
-    return py::make_tuple(
-        py::array_t<int>(parent.size(), parent.data()),
-        children_list,
-        root,
-        py::array_t<int>(linking_vertex.size(), linking_vertex.data()),
-        persistent_children_list,
-        py::array_t<int>(positive_pers.size(), positive_pers.data())
-    );
+py::tuple link_reduce_edges_py(
+    const py::array_t<Birth, py::array::c_style | py::array::forcecast>& birth,
+    const py::array_t<Index, py::array::c_style | py::array::forcecast>& edges,
+    Birth epsilon,
+    bool keep_basin
+) {
+    (void)epsilon;
+    (void)keep_basin;
+    return to_python_tuple(link_reduce_edges(birth, edges));
 }
 
-// Define module and expose the functions
-PYBIND11_MODULE(link_reduce_cpp, m) {
-    m.def("_link_reduce_cpp", &link_reduce_wrapper, "A function that performs link reduction",
-          py::arg("birth"), py::arg("edges"), py::arg("epsilon"), py::arg("keep_basin") = false);
+py::tuple link_reduce_vertices_2d_py(
+    const py::array_t<Birth, py::array::c_style | py::array::forcecast>& birth,
+    std::pair<Index, Index> shape,
+    bool dual
+) {
+    const auto size = static_cast<Index>(birth.size());
+    const auto extra_vertex = size - 1;
+    auto result = link_reduce_grid(
+        birth,
+        size,
+        [&](Index vertex) { return neighbors_2d(vertex, shape.first, shape.second, dual, extra_vertex); }
+    );
+    return to_python_tuple(result);
+}
 
-    // Expose the compute_root function
-    m.def("compute_root_cpp", [](int v, py::array_t<int> ancestor) {
-        std::vector<int> ancestor_vec(ancestor.data(), ancestor.data() + ancestor.size());
-        return compute_root(v, ancestor_vec);
-    }, "Compute the root/ancestor of a node");
+py::tuple link_reduce_vertices_3d_py(
+    const py::array_t<Birth, py::array::c_style | py::array::forcecast>& birth,
+    std::tuple<Index, Index, Index> shape,
+    bool dual
+) {
+    const auto size = static_cast<Index>(birth.size());
+    const auto extra_vertex = size - 1;
+    auto result = link_reduce_grid(
+        birth,
+        size,
+        [&](Index vertex) {
+            return neighbors_3d(
+                vertex,
+                std::get<0>(shape),
+                std::get<1>(shape),
+                std::get<2>(shape),
+                dual,
+                extra_vertex
+            );
+        }
+    );
+    return to_python_tuple(result);
+}
 
-    m.def("_link_reduce_vertices_cpp", &_link_reduce_vertices_cpp, "Alternative link reduce, iterating on vertices");
+PYBIND11_MODULE(link_reduce_cpp, module) {
+    module.doc() = "Native link-reduce kernels for topapprox.";
 
-    m.def("_link_reduce_vertices_cpp_3D", &_link_reduce_vertices_cpp_3D, "Link reduce for 3D images, iterating on vertices");
+    module.def(
+        "_link_reduce_cpp",
+        &link_reduce_edges_py,
+        py::arg("birth"),
+        py::arg("edges"),
+        py::arg("epsilon") = 0.0,
+        py::arg("keep_basin") = false
+    );
+    module.def("_link_reduce_vertices_cpp", &link_reduce_vertices_2d_py, py::arg("birth"), py::arg("shape"), py::arg("dual"));
+    module.def("_link_reduce_vertices_cpp_3D", &link_reduce_vertices_3d_py, py::arg("birth"), py::arg("shape"), py::arg("dual"));
 }

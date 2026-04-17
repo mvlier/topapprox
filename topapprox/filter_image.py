@@ -1,164 +1,80 @@
-"""
-Topapprox - Image Filtering Main Module
+"""Image-oriented topological filtering."""
 
-This module implements topological filtering for images, using persistent homology to perform low persistence filtering.
-More explicitely, given a 1D or 2D array, we can compute the persistence diagram for the sublevel filtration of this
-array, and by choosing a threshold `epsilon` we can filter out all elements with persistence less than `epsilon`
-in the diagram. This module makes it possible to realize this filtered persistence diagram as a function which is
-at a distance of at most `epsilon` from the original function in the l-infinity norm.
+from __future__ import annotations
 
-The module supports three different methods for computing the required operations: 
-1. A pure Python implementation
-2. A Numba-optimized implementation
-3. A C++ extension for higher performance.
-
-Classes:
-    TopologicalFilterImage: Base class for applying low persistence filtering to images.
-
-Todo:
-    * Adapt `TopologicalFilterImage so that it can filter 0 and 1 homology alternating until now low persistence class exists
-    * Remove obsolete attributes and methods, such as `keep_basin` and `persistence` in the constructor.
-    * Improve error handling and warnings for fallback scenarios.
-    * Develop a class for meshes
-    * Edit _link_reduce so that it can compute the BHT without having to compute the modified function.
-    * Optimize the way basin_size is computed
-"""
+import warnings
 
 import numpy as np
-from .mixins.Method_Loader import MethodLoaderMixin
-from .bht import BasinHierarchyTree
+
+from ._filter_base import BaseTopologicalFilter
+from ._grid import sorted_grid_edges
 
 
-class TopologicalFilterImage(MethodLoaderMixin):
-    """Base class for topological filtering for images
+class TopologicalFilterImage(BaseTopologicalFilter):
+    """Low-persistence filtering for 1D/2D/3D arrays."""
 
-    Compute topological low persistence filtering for images
-        
-    Attributes:
-        shape (tuple[int,int]): shape of the image
-        persistence (np.array): persistent homology. each row indicates (birth,death,brith index)
-        dual (bool): flag for duality (PH1)
-        method (str): Which method to use for `_link_reduce`, options are "python", "numba" or "cpp" (fastest)
-    """
-    
-    # Changed cpp to python
-    # changed vert
-    def __init__(self, img, *, method="cpp", bht_method="python", dual=False, recursive=True, iter_vertex=True):
-        self.shape = img.shape
-        self.is_3D = len(self.shape) == 3
-        self.method = self.load_link_reduce(method, __package__, iter_vertex=iter_vertex, is_3D=self.is_3D) # #from MethodLoaderMixin
-        self.bht_method = self.load_bht(bht_method, __package__) #from MethodLoaderMixin
-        self.bht = None
-        self.recursive = recursive
-        self.birth = img.ravel().copy() # filtration value for each vertex
-        self.dual = dual
-        self.edges = None
-        self.persistence = None
-        self.iter_vertex = iter_vertex
+    def __init__(
+        self,
+        img,
+        *,
+        method: str = "cpp",
+        bht_method: str = "python",
+        dual: bool = False,
+        recursive: bool = True,
+        iter_vertex: bool = True,
+    ) -> None:
+        image = np.asarray(img)
+        if image.ndim not in {1, 2, 3}:
+            raise ValueError("img must be a 1D, 2D, or 3D numpy-compatible array.")
+
+        self._input_was_1d = image.ndim == 1
+        if self._input_was_1d:
+            image = image.reshape(1, -1)
+
+        if bht_method != "python":
+            warnings.warn(
+                "The dedicated C++ BHT implementation was removed; using the Python "
+                "BasinHierarchyTree implementation instead.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        self.image = np.array(image, copy=True)
+        self.shape = self.image.shape
+        self.iter_vertex = bool(iter_vertex)
+        self.birth = self.image.astype(float, copy=False).ravel().copy()
+        self._sorted_edges: np.ndarray | None = None
+
         if dual:
-            self.bht_birth = np.concatenate((-self.birth, np.array([-np.inf])))
+            extra = np.array([-np.inf], dtype=self.birth.dtype)
+            self.bht_birth = np.concatenate((-self.birth, extra))
         else:
             self.bht_birth = self.birth.copy()
 
-        
-    #TODO: `keep_basin` now became obsolete, we have to either completely remove it, or include an option to 
-    #      save all the basins when it is called. 
-    # The reason it is obsolete is that now we have a list of children (`self.children`), and even more a list 
-    # of non zero persistence children (`self.persistent_children``)
-    def low_pers_filter(self, epsilon, *, size_range = None):
-        """ computes topological high-pass filtering
-        Args:
-            epsilon (float): cycles having persistence below this value will be eliminated
-            keep_basin (bool): if set to True, basin information will be stored for re-use. This makes the computation much slower but effective when filterings for multiple epsilons are computed.
-            method (string): can be chosen between "python", "numba" or "cpp".
-        Returns:
-            np.array: a filtered image
-        """
-        if self.bht is None:
-            self._update_BHT()
+        super().__init__(method=method, dual=dual, recursive=recursive, dimensions=self.image.ndim)
 
-        if size_range is None:
-            modified = self.bht._low_pers_filter(epsilon)
-        else:
-            modified = self.bht._lpf_size_filter(epsilon, size_range=size_range)
+    def _build_bht(self):
+        if self.image.ndim == 3:
+            if self.backend.reduce_grid_3d is None:
+                raise RuntimeError("The selected backend does not support 3D image filtering.")
+            raw = self.backend.reduce_grid_3d(self.bht_birth, self.shape, self.dual)
+            return self._build_tree(self.bht_birth, raw)
+
+        if self.iter_vertex:
+            raw = self.backend.reduce_grid_2d(self.bht_birth, self.shape, self.dual)
+            return self._build_tree(self.bht_birth, raw)
+
+        if self._sorted_edges is None:
+            birth_for_sort = self.bht_birth if self.dual else self.birth
+            self._sorted_edges = sorted_grid_edges(birth_for_sort, self.shape, dual=self.dual)
+        raw = self.backend.reduce_edges(self.bht_birth, self._sorted_edges, 0.0)
+        return self._build_tree(self.bht_birth, raw)
+
+    def _format_output(self, values: np.ndarray) -> np.ndarray:
+        output = np.asarray(values)
         if self.dual:
-            modified = -modified[:-1]
-        return modified.reshape(self.shape)
-
-        
-    def _update_BHT(self):
-        '''Updates BHT via link_reduce method.
-        One essential ingredient for obtaining the BHT is edge ordering.
-        
-        TODO: The BHT cpp method is not working properly yet, some testing
-        and improvement is still needed.
-        '''
-
-        if self.iter_vertex or self.is_3D:
-            result = self._link_reduce(self.bht_birth, self.shape, self.dual)
-        else:
-            if self.edges is None:
-                self._compute_sorted_edges()
-            result = self._link_reduce(self.bht_birth, self.edges, 0)
-
-        if self.bht_method=="python":
-            self.bht = self.BHT_Class(recursive=self.recursive, dual=self.dual)
-            self.bht.parent = result[0]
-            self.bht.children = result[1]
-            self.bht.root = result[2]
-            self.bht.linking_vertex = result[3]
-            self.bht.persistent_children = result[4]
-            self.bht.positive_pers = result[5]
-            self.bht.birth = self.bht_birth
-        elif self.bht_method=="cpp":
-            self.bht = self.BHT_Class(result[0], result[1], result[2], result[3], result[4], result[5], self.bht_birth)
-        else:
-            raise ValueError(f"For BHT method expected 'python' or 'cpp', but got {self.bht_method}")
-
-        
-    def _compute_sorted_edges(self):
-        ''' Saves the sorted edges in `self.edges`.
-        '''
-        # create graph
-        n,m = self.shape
-        edges = [(i*m + j, (i+1)*m + j) for i in range(n-1) for j in range(m)]+[(i*m + j, i*m + j+1) for j in range(m-1) for i in range(n)] #Edges for the grid case
-        # edges = np.array([(np.ravel_multi_index(u, self.shape), np.ravel_multi_index(v, self.shape)) for u, v in E])
-        # birth_edges = np.max([(self.birth[a[0]],self.birth[a[1]]) for a in edges], axis=1) #Birth value for each edge
-
-        if self.dual:
-            edges += [(i*m + j, (i+1)*m + j+1) for i in range(n-1) for j in range(m-1)] + \
-                 [(i*m + j, (i-1)*m + j+1) for i in range(1, n) for j in range(m-1)]
-
-            # Add one vertex valued -infty and connect the boundary to the vertex n*m
-            edges += [(j, n*m) for j in range(m)] + \
-                     [((n-1)*m + j, n*m) for j in range(m)] + \
-                     [(i*m, n*m) for i in range(1, n-1)] + \
-                     [(i*m + m-1, n*m) for i in range(1, n-1)]
-            
-            edges = np.array(edges, dtype=np.uint32)
-            birth_edges = np.maximum(self.bht_birth[edges[:, 0]], self.bht_birth[edges[:, 1]])
-        else:
-            edges = np.array(edges, dtype=np.uint32)
-            birth_edges = np.maximum(self.birth[edges[:, 0]], self.birth[edges[:, 1]])
-        sorted_indices = np.argsort(birth_edges)
-        self.edges = edges[sorted_indices]
-        # print(f"Edges:{self.edges}")
-
-    def get_BHT(self, *, with_children=False):
-        if self.bht is None or self.bht.children is None:
-            self._update_BHT()
-        return self.bht._get_BHT(with_children=with_children)
-    
-    def get_persistence(self, *, reduced=True):
-        if self.bht is None or self.bht.children is None:
-            self._update_BHT()
-        return self.bht.get_persistence(reduced=reduced)
-
-        
-
-
-
-
-
-        
-
+            output = -output[:-1]
+        output = output.reshape(self.shape)
+        if self._input_was_1d:
+            return output.reshape(-1)
+        return output

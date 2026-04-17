@@ -1,7 +1,10 @@
 import pytest
-from topapprox import TopologicalFilterImage, TopologicalFilterGraph
+from topapprox import ImageFilter, available_backends
 import numpy as np
-import cripser
+
+cripser = pytest.importorskip("cripser")
+
+pytestmark = pytest.mark.skipif("cpp" not in available_backends(dimensions=3), reason="3D filtering requires the C++ backend.")
 
 def test_compare_cripser_3D():
     '''Compares the persistent diagrams for 0 and 2 homology
@@ -11,10 +14,10 @@ def test_compare_cripser_3D():
     n,m,l = 50,50,50
     arr3D = np.random.rand(n,m,l)
 
-    tfi = TopologicalFilterImage(arr3D)
+    tfi = ImageFilter(arr3D)
     tfi._update_BHT()
     pd_topapprox_0 = tfi.bht.get_persistence()
-    tfi_dual = TopologicalFilterImage(arr3D, dual=True)
+    tfi_dual = ImageFilter(arr3D, dual=True)
     tfi_dual._update_BHT()
     pd_topapprox_2 = tfi_dual.bht.get_persistence()
 

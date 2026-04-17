@@ -1,28 +1,95 @@
 [build-system]
-requires = ["setuptools>=42", "wheel", "pybind11>=2.5.0"]
-build-backend = "setuptools.build_meta"
+requires = [
+    "pybind11>=2.12",
+    "scikit-build-core>=0.10",
+]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "topapprox"
-version = "0.0.4"
-authors = [
-  { name="Matias de Jong van Lier", email="matias.vanlier@gmail.com" },
-  { name="Shizuo Kaji", email="shizuo.kaji@gmail.com"},
-  { name="Junyan Chu" },
-  { name="Sebastían Elías Graiff Zurita"}
-]
-description = "Package for computing topological filtering of singals over networks using Persistent Homology."
+version = "0.2.1"
+description = "Persistent-homology-based filtering for arrays and graph signals."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Matias de Jong van Lier", email = "matias.vanlier@gmail.com" },
+    { name = "Shizuo Kaji", email = "shizuo.kaji@gmail.com" },
+    { name = "Junyan Chu" },
+    { name = "Sebastían Elías Graiff Zurita" },
+]
+keywords = ["persistent homology", "topological data analysis", "signal processing", "pybind11"]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Mathematics",
 ]
 dependencies = [
-  "pybind11>=2.5.0",
-  ]
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+plot = [
+    "matplotlib>=3.8",
+    "networkx>=3.2",
+]
+numba = [
+    "numba>=0.60; python_version < '3.14'",
+]
+test = [
+    "pytest>=8.2",
+]
+dev = [
+    "build>=1.2.2",
+    "cibuildwheel>=2.21",
+    "matplotlib>=3.8",
+    "networkx>=3.2",
+    "numba>=0.60; python_version < '3.14'",
+    "pytest>=8.2",
+    "ruff>=0.6.9",
+]
 
 [project.urls]
-Homepage = "https://github.com/mvlier/topapprox"
-Issues = "https://github.com/mvlier/topapprox/issues"
+Homepage = "https://github.com/shizuo-kaji/topapprox"
+Repository = "https://github.com/shizuo-kaji/topapprox"
+Issues = "https://github.com/shizuo-kaji/topapprox/issues"
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+wheel.packages = ["topapprox"]
+cmake.version = ">=3.18"
+
+[tool.scikit-build.sdist]
+include = [
+    "CMakeLists.txt",
+    "README.md",
+    "LICENSE",
+    "tests/*.py",
+    "tests/data_for_testing/*.npy",
+    "topapprox/*.cpp",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.cibuildwheel]
+build = ["cp310-*", "cp311-*", "cp312-*", "cp313-*"]
+skip = ["pp*", "*-musllinux_*"]
+test-command = "python -m pytest {project}/tests/test_compare_version.py {project}/tests/test_lpf_1D.py {project}/tests/test_lpf_2D.py {project}/tests/test_graph_diagram_api.py -q"
+test-requires = ["pytest>=8.2"]

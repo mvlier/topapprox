@@ -8,7 +8,7 @@ if the BHT is constructed correctly.
 
 import pytest
 import numpy as np
-from topapprox import TopologicalFilterImage
+from topapprox import ImageFilter, available_backends
 
 
 # Each entry in TEST_CASES_2D contains:
@@ -87,7 +87,7 @@ TEST_CASES_2D = {
 # """
 
 
-@pytest.mark.parametrize("method", ["python", "numba", "cpp"])
+@pytest.mark.parametrize("method", available_backends())
 def test_all_2D_cases(method):
     for case_name, case in TEST_CASES_2D.items():
         signal = case["signal"]
@@ -95,7 +95,7 @@ def test_all_2D_cases(method):
         current_input = signal
         for i, test in enumerate(case["tests"]):
             dual = test.get("dual", False)
-            uf = TopologicalFilterImage(current_input, method=method, dual=dual)
+            uf = ImageFilter(current_input, method=method, dual=dual)
             result = uf.low_pers_filter(test["threshold"])
 
             assert np.all(result.astype(np.int32) == test["expected_output"]), (

@@ -5,7 +5,7 @@ Additional functions used in several testing cases.
 """
 
 import pytest
-from topapprox import TopologicalFilterImage, TopologicalFilterGraph
+from topapprox import GraphFilter, ImageFilter
 import numpy as np
 
 def check_bht(parent, linking_vertex, expected_parent, expected_linking_vertex, birth, *,

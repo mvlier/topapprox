@@ -1,418 +1,140 @@
-"""
-Topapprox - Graph Filtering Main Module
+"""Graph-with-faces topological filtering."""
 
-This module implements topological filtering for graphs, using persistent homology to perform low persistence filtering.
-More explicitely, given a graph with faces embadabble, we can compute the persistence diagram for the sublevel filtration of this
-array, and by choosing a threshold `epsilon` we can filter out all elements with persistence less than `epsilon`
-in the diagram. This module makes it possible to realize this filtered persistence diagram as a function which is
-at a distance of at most `epsilon` from the original function in the l-infinity norm.
+from __future__ import annotations
 
-The module supports three different methods for computing the required operations: 
-1. A pure Python implementation
-2. A Numba-optimized implementation
-3. A C++ extension for higher performance.
-
-Classes:
-    TopologicalFilterImage: Base class for applying low persistence filtering to images.
-
-Todo:
-    * Adapt `TopologicalFilterImage so that it can filter 0 and 1 homology alternating until now low persistence class exists
-    * Remove obsolete attributes and methods, such as `keep_basin` and `persistence` in the constructor.
-    * Improve error handling and warnings for fallback scenarios.
-    * Develop a class for meshes
-    * Edit _link_reduce so that it can compute the BHT without having to compute the modified function.
-    * Optimize the way basin_size is computed
-"""
+import warnings
 
 import numpy as np
-from .mixins.Method_Loader import MethodLoaderMixin
+
+from ._filter_base import BaseTopologicalFilter
+from ._grid import boundary_from_array_shape, faces_from_array_shape
 from .gwf import GraphWithFaces
-from .bht import BasinHierarchyTree
 
 
+class TopologicalFilterGraph(BaseTopologicalFilter):
+    """Low-persistence filtering for graph signals with an embedding."""
 
-#Class for graph input
-class TopologicalFilterGraph(MethodLoaderMixin):
-  def __init__(self, input=None, method="cpp", bht_method="python", dual=False, recursive=True, is_triangulated=False, gwf=None):
-    self.recursive = recursive
-    self.dual = dual
-    self.method = self.load_link_reduce(method, __package__) # python, numba or C++
-    self.bht_method = self.load_bht(bht_method, __package__) #from MethodLoaderMixin
-    self.bht = self.BHT_Class(recursive=self.recursive, dual=self.dual)
-    self.modified = None
-    self.G = None # graph structure
-    self.pos = None #position for drawing graph
-    self.diagram = [None, None]  # persistence diagram cache [PH0, PH1]
-    self.children = None
-    self.persistent_children = None
-    self.parent = None
-    self.shape = None
-    self.gwf = gwf
-    self.is_triangulated = is_triangulated
-    self.compute_mode = "dual" if self.dual else "normal"
-    if isinstance(input,np.ndarray):
-      self.from_array(input)
-    elif input is not None:
-      raise ValueError(f"Unknown initialisation type")
+    def __init__(
+        self,
+        input=None,
+        *,
+        method: str = "cpp",
+        bht_method: str = "python",
+        dual: bool = False,
+        recursive: bool = True,
+        is_triangulated: bool = False,
+        gwf: GraphWithFaces | None = None,
+    ) -> None:
+        if bht_method != "python":
+            warnings.warn(
+                "The dedicated C++ BHT implementation was removed; using the Python "
+                "BasinHierarchyTree implementation instead.",
+                UserWarning,
+                stacklevel=2,
+            )
 
-  def compute_gwf(self, F: list, H: list, signal: np.ndarray, E=None):
-    """Computes the graph with faces
-    """
-    # TODO: adapt this class so that it is possible to compute normal 
-    # and dual for the same class to optimize
-    self.gwf = GraphWithFaces(
-      F=F,
-      H=H,
-      E=E,
-      signal=signal,
-      compute=self.compute_mode,
-      is_triangulated=self.is_triangulated,
-    )
-    self.diagram = [None, None]
+        self.shape: tuple[int, ...] | None = None
+        self.signal: np.ndarray | None = None
+        self.gwf = gwf
+        self.is_triangulated = bool(is_triangulated)
+        self.diagram: list[np.ndarray | None] = [None, None]
 
+        super().__init__(method=method, dual=dual, recursive=recursive, dimensions=2)
 
-  ## create a graph with faces from image
-  def from_array(self, img: np.array):
-    self.shape = img.shape
-    if len(img.shape)==2: # 2D case
-      n,m = img.shape
-      F = [[i*m + j,(i+1)*m +j, (i+1)*m + j+1, i*m + j+1] for i in range(n-1) for j in range(m-1)]
-    elif len(img.shape)==1: # 1D case
-      n,m = img.shape[0],1
-      F = [[i, i+1] for i in range(n-1)]
-    else:
-      raise ValueError("array dimension should be 1 or 2!")
-    boundary_vertices =  [j for j in range(m)] + [i*m + m-1 for i in range(1,n)] + \
-                         [(n-1)*m + m - j for j in range(2,m+1)] + [m*(n-i) for i in range(2,n)]
-    H = [boundary_vertices]
-    self.signal = img.ravel()
-    self.compute_gwf(F, H, self.signal)
+        if self.gwf is not None:
+            self.signal = np.asarray(self.gwf.signal[: self.gwf.n_nodes], dtype=float).copy()
 
+        if isinstance(input, np.ndarray):
+            self.from_array(input)
+        elif input is not None:
+            raise TypeError("input must be a numpy array or None.")
 
-  def _update_BHT(self):
-    if self.dual:
-      birth = -self.gwf.signal
-      edges = self.gwf.dualE
-    else:
-      birth = self.gwf.signal
-      edges = self.gwf.E
-    self.bht.birth = birth
-    (
-      self.bht.parent,
-      self.bht.children,
-      self.bht.root,
-      self.bht.linking_vertex,
-      self.bht.persistent_children,
-      self.bht.positive_pers,
-    ) = self._link_reduce(birth, edges, 0)
+    def compute_gwf(self, F: list, H: list, signal: np.ndarray, E=None) -> None:
+        self.signal = np.asarray(signal).ravel().copy()
+        self.gwf = GraphWithFaces(
+            F=F,
+            H=H,
+            E=E,
+            signal=self.signal,
+            compute="dual" if self.dual else "normal",
+            is_triangulated=self.is_triangulated,
+        )
+        self.diagram = [None, None]
+        self.bht = None
 
-  def _original_vertex_count(self):
-    if self.shape is not None:
-      return self.shape[0] * self.shape[1]
-    if self.is_triangulated:
-      return self.gwf.signal.shape[0] - len(self.gwf.H)
-    return self.gwf.signal.shape[0] - len(self.gwf.F) - len(self.gwf.H)
-    
-  def low_pers_filter(self, epsilon, *, size_range = None):
-      """ computes topological high-pass filtering
-      Args:
-          epsilon (float): cycles having persistence below this value will be eliminated
-          keep_basin (bool): if set to True, basin information will be stored for re-use. This makes the computation much slower but effective when filterings for multiple epsilons are computed.
-          method (string): can be chosen between "python", "numba" or "cpp".
-      Returns:
-          np.array: a filtered image
-      """
-      if self.bht.children is None:
-        self._update_BHT()
+    def from_array(self, img: np.ndarray) -> None:
+        array = np.asarray(img)
+        if array.ndim not in {1, 2}:
+            raise ValueError("Only 1D and 2D arrays can be converted into a GraphWithFaces.")
 
-      if size_range is None:
-        modified = self.bht._low_pers_filter(epsilon)
-      else:
-        modified = self.bht._lpf_size_filter(epsilon, size_range=size_range)
+        self.shape = array.shape
+        self.signal = array.ravel().copy()
+        faces = faces_from_array_shape(array.shape)
+        holes = [boundary_from_array_shape(array.shape)]
+        self.compute_gwf(faces, holes, self.signal)
 
-      n_vertices = self._original_vertex_count()
-      if self.shape is not None:
+    def _build_bht(self):
+        if self.gwf is None:
+            raise RuntimeError("GraphWithFaces is not initialized. Use compute_gwf or from_array first.")
+
+        birth = -self.gwf.signal if self.dual else self.gwf.signal
+        edges = self.gwf.dual_edges if self.dual else self.gwf.edges
+        raw = self.backend.reduce_edges(birth, edges, 0.0)
+        return self._build_tree(birth, raw)
+
+    def _format_output(self, values: np.ndarray) -> np.ndarray:
+        if self.signal is None:
+            raise RuntimeError("Graph signal is not initialized.")
+
+        n_vertices = self.signal.shape[0]
+        output = np.asarray(values)[:n_vertices]
         if self.dual:
-          modified = -modified[:n_vertices]
+            output = -output
+        if self.shape is not None:
+            return output.reshape(self.shape)
+        return output
+
+    @staticmethod
+    def _as_birth_death(diagram: np.ndarray) -> np.ndarray:
+        diagram = np.asarray(diagram)
+        if diagram.ndim == 2 and diagram.shape[0] > 0:
+            return diagram[:, :2]
+        return np.empty((0, 2), dtype=float)
+
+    def _clone_with_dual(self, *, dual: bool) -> "TopologicalFilterGraph":
+        if self.gwf is None or self.signal is None:
+            raise RuntimeError("GraphWithFaces is not initialized. Use compute_gwf or from_array first.")
+
+        cloned = TopologicalFilterGraph(
+            method=self.method,
+            dual=dual,
+            recursive=self.recursive,
+            is_triangulated=self.is_triangulated,
+        )
+        cloned.shape = self.shape
+        cloned.compute_gwf(self.gwf.F, self.gwf.H, self.signal, E=self.gwf.edges)
+        return cloned
+
+    def get_diagram(self) -> list[np.ndarray]:
+        if self.gwf is None:
+            raise RuntimeError("GraphWithFaces is not initialized. Use compute_gwf or from_array first.")
+
+        if self.diagram[0] is None:
+            source = self if not self.dual else self._clone_with_dual(dual=False)
+            self.diagram[0] = self._as_birth_death(source.get_persistence(reduced=False))
+
+        if self.diagram[1] is None:
+            source = self if self.dual else self._clone_with_dual(dual=True)
+            self.diagram[1] = self._as_birth_death(source.get_persistence(reduced=True))
+
+        return [np.asarray(self.diagram[0]), np.asarray(self.diagram[1])]
+
+    def _low_pers_filter(self, epsilon: float = 0.0, dual: bool = False, verbose: bool = False):
+        del verbose
+        if dual == self.dual:
+            filtered = self.low_pers_filter(epsilon)
         else:
-          modified = modified[:n_vertices]
-        return modified.reshape(self.shape)
+            filtered = self._clone_with_dual(dual=dual).low_pers_filter(epsilon)
 
-      if self.dual:
-        return -modified[:n_vertices]
-      return modified[:n_vertices]
-
-
-  ## returns modified function values in the original array's shape
-  def get_array(self):
-    mod_img = np.zeros((self.n,self.m))
-    for i in range(len(self.modified)):
-      mod_img[self.idx2node[i]] = self.modified[i]
-    return(mod_img.reshape(self.shape))
-
-  def get_modified_filtration(self):
-    return {u: self.modified[i] for i,u in enumerate(self.idx2node)}
-
-  def _dualPH0_to_PH1(self,dualPH0):
-    PH1 = list()
-    for x in dualPH0:
-      PH1.append((-x[1],-x[0]))
-    if PH1 == list():
-      return(np.reshape(np.array([]),(0,2)))
-    return(np.array(PH1))
-
-  @staticmethod
-  def _as_birth_death(pd):
-    pd = np.asarray(pd)
-    if pd.ndim == 2 and pd.shape[0] > 0:
-      return pd[:, :2]
-    return np.empty((0, 2), dtype=float)
-
-  def _base_signal(self):
-    if self.shape is not None:
-      return self.signal.ravel().copy()
-    if self.gwf is None:
-      raise RuntimeError("GraphWithFaces is not initialized. Use compute_gwf or from_array first.")
-    return self.gwf.signal[: self.gwf.n_nodes].copy()
-
-  #Returns the persistence diagram as list of numpy arrays [PH0,PH1]
-  def get_diagram(self):
-    if self.gwf is None:
-      raise RuntimeError("GraphWithFaces is not initialized. Use compute_gwf or from_array first.")
-
-    if self.diagram[0] is None:
-      if not self.dual:
-        _ = self.low_pers_filter(0)
-        self.diagram[0] = self._as_birth_death(self.bht.get_persistence(reduced=False))
-      else:
-        tfg0 = TopologicalFilterGraph(
-          method=self.method,
-          bht_method=self.bht_method,
-          dual=False,
-          recursive=self.recursive,
-          is_triangulated=self.is_triangulated,
-        )
-        tfg0.compute_gwf(F=self.gwf.F, H=self.gwf.H, E=self.gwf.E, signal=self._base_signal())
-        _ = tfg0.low_pers_filter(0)
-        self.diagram[0] = self._as_birth_death(tfg0.bht.get_persistence(reduced=False))
-
-    if self.diagram[1] is None:
-      if self.dual:
-        _ = self.low_pers_filter(0)
-        self.diagram[1] = self._as_birth_death(self.bht.get_persistence())
-      else:
-        tfg1 = TopologicalFilterGraph(
-          method=self.method,
-          bht_method=self.bht_method,
-          dual=True,
-          recursive=self.recursive,
-          is_triangulated=self.is_triangulated,
-        )
-        tfg1.compute_gwf(F=self.gwf.F, H=self.gwf.H, E=self.gwf.E, signal=self._base_signal())
-        _ = tfg1.low_pers_filter(0)
-        self.diagram[1] = self._as_birth_death(tfg1.bht.get_persistence())
-
-    return self.diagram
-
-
-  ## merge families and modify the filtration values.
-  # (set epsilon=0 for leaving filtration values intact)
-  def link(self, ui,vi, val=np.inf, epsilon=0):
-      if ui==vi:
-        return
-      # apply the "elder rule" to determine who is the parent
-      # (TODO) keeping a mapping parent => vertex indices can be more efficient
-      if self.birth[ui] >= self.birth[vi]: # ui>vi is guaranteed
-        if abs(self.birth[ui]-val)<epsilon:
-          self.modified[self.parent == self.parent[ui]]=val
-        self.parent[self.parent == self.parent[ui]]=self.parent[vi]
-      elif self.birth[ui] < self.birth[vi]:
-        if abs(self.birth[vi]-val)<epsilon:
-          self.modified[self.parent == self.parent[vi]]=val
-        self.parent[self.parent == self.parent[vi]]=self.parent[ui]
-
-  # ## look at an edge and merge end points if necessary
-  # def reduce(self,ui,vi):
-  #     # parents of u and v
-  #     up = self.parent[ui] # self.find(ui)
-  #     vp = self.parent[vi] # self.find(vi)
-  #     #print(up,vp,self.birth[up], self.birth[vp])
-  #     # if self.birth[ui] > self.birth[vi]:
-  #     #   killing = ui
-  #     # elif (self.birth[ui] == self.birth[vi]) and ui>vi:
-  #     #   killing = ui # break tie consistently
-  #     # else:
-  #     #   killing = vi
-  #     # death = self.birth[killing] # filtration value of the added edge
-  #     death = max(self.birth[ui],self.birth[vi])
-  #     if up != vp: # if their bosses are different (i.e., they belong to different families)
-  #       killed = up if self.birth[up] > self.birth[vp] else vp
-  #       birth = self.birth[killed] # choose the younger one
-  #       if birth < death: # one of families is killed to produce a cycle
-  #         self.persistence.append((birth,death)) # (birth,death)
-  #         #print(self.persistence[-1])
-  #         self.link(up,vp,death,self.epsilon)
-  #       else:
-  #         self.link(up,vp)
-
-  ## Low persistence filter for Graphs
-  def _low_pers_filter(self, epsilon=0, dual=False, verbose=False):
-    if self.gwf is None:
-      raise RuntimeError("GraphWithFaces is not initialized. Use compute_gwf or from_array first.")
-
-    if dual == self.dual:
-      filtered = self.low_pers_filter(epsilon)
-    else:
-      if self.shape is not None:
-        signal = self.signal.ravel()
-      else:
-        signal = self.gwf.signal[:self.gwf.n_nodes]
-      aux = TopologicalFilterGraph(
-        method=self.method,
-        bht_method=self.bht_method,
-        dual=dual,
-        recursive=self.recursive,
-        is_triangulated=self.is_triangulated,
-      )
-      aux.compute_gwf(self.gwf.F, self.gwf.H, signal, E=self.gwf.E)
-      filtered = aux.low_pers_filter(epsilon)
-
-    values = np.array(filtered).ravel()
-    return {i: values[i] for i in range(values.shape[0])}
-
-
-
-
-
-  #######################################################################################
-  #######################################################################################
-  ################################ FOR DRAWING ##########################################
-  #######################################################################################
-  #######################################################################################
-
-  # def reorient(self):
-  #   k=0
-  #   List=list(range(len(self.faces)-1))
-  #   self.faces = [list(f) for f in self.faces]
-  #   while List:
-  #     for j in List:
-  #       interP=[x for x in self.faces[k] if x in self.faces[j]]
-  #       if len(interP)>1:
-  #         index_P0= self.faces[j].index(interP[0])
-  #         # Determine the next index, or wrap around to the first index if P0 is the last element
-  #         next_index = (index_P0 + 1) % len(self.faces[j])
-  #         # Get the number next to 2
-  #         next_number = self.faces[j][next_index]
-  #         if next_number==interP[1]:
-  #           self.faces[j+1].reverse()
-  #       k=j
-  #       List.remove(j)
-  #       break
-
-
-  # def pos_from_faces(self): ## still buggy
-  #   self.reorient()
-  #   PE = nx.PlanarEmbedding()
-  #   for node in self.boundary:
-  #     faces = [face for face in self.faces if node in face]
-
-  #     #Getting a neighbour (nb1) of node, which only shares one face with node
-  #     numb_of_faces = {u: len([x for x in faces if u in x]) for u in self.G.neighbors(node)}
-  #     nb1 = [x for x, v in numb_of_faces.items() if v==1][0]
-
-  #     face = [f for f in faces if nb1 in f][0]
-  #     idx = face.index(node)
-  #     if nb1 == face[idx-1]:
-  #       add_edge = PE.add_half_edge_cw
-  #       next_nbh = lambda f : f[idx-len(f)+1]
-  #     else :
-  #       add_edge = PE.add_half_edge_ccw
-  #       next_nbh = lambda f : f[idx-1]
-  #     nb2 = next_nbh(face)
-  #     add_edge(node,nb1,None)
-  #     add_edge(node,nb2,nb1)
-  #     faces.pop(faces.index(face))
-  #     while len(faces)>0:
-  #       face = [f for f in faces if nb2 in f]
-  #       if len(face)>0:
-  #         face = face[0]
-  #         nb1 = nb2
-  #         idx = face.index(node)
-  #         nb2 = next_nbh(face)
-  #         add_edge(node,nb2,nb1)
-  #         faces.pop(faces.index(face))
-  #       else:
-  #         break
-
-  #   internal_nodes = set(self.G.nodes) - set(self.boundary)
-
-  #   for node in internal_nodes:
-  #     add_edge = PE.add_half_edge_cw
-  #     faces = [face for face in self.faces if node in face]
-  #     face = faces[-1]
-  #     idx = face.index(node)
-  #     nb1 = face[idx-1]
-  #     nb2 = face[idx-len(face)+1]
-  #     add_edge(node, nb1, None)
-  #     add_edge(node, nb2, nb1)
-  #     faces.pop()
-  #     while len(faces) > 1:
-  #       face = [f for f in faces if nb2 in f]
-  #       if len(face)>0:
-  #         face = face[0]
-  #         idx = face.index(node)
-  #         nb1 = nb2
-  #         nb2 = face[idx-len(face)+1]
-  #         add_edge(node, nb2, nb1)
-  #         faces.pop(faces.index(face))
-  #       else:
-  #         break
-  #   try:
-  #     PE.check_structure()
-  #     pos = nx.combinatorial_embedding_to_pos(PE)
-  #   except:
-  #     print("NOT GOOD")
-  #     return(None)
-  #   return(pos)  
-    
-  # def draw(self, *, with_filtration=False, with_labels=False, modified=False, ax=None, node_size=600, font_size=8):
-  #   if self.G is None:
-  #     self.G = nx.Graph()
-  #     self.G.add_edges_from(self.E)
-  #   if self.pos == None:
-  #     self.pos = self.pos_from_faces()
-  #   #Drawing
-  #   if ax == None:
-  #     if with_labels:
-  #       if modified:
-  #         mf = self.get_modified_filtration()
-  #         nx.draw(self.G, self.pos, labels={u:f'V{u} : {mf[u]}' for u in self.G.nodes()}, with_labels = True, node_size=node_size, font_size=font_size)
-  #       elif with_filtration:
-  #         nx.draw(self.G, self.pos, labels={u:f'V{u} : {self.filtration[u]}' for u in self.G.nodes()}, with_labels = True, node_size=node_size, font_size=font_size)
-  #       else:
-  #         nx.draw(self.G, self.pos, labels = {u:f'V{u}' for u in self.G.nodes()}, with_labels = True, node_size=node_size, font_size=font_size)
-  #     else:
-  #       if modified:
-  #         mf = self.get_modified_filtration()
-  #         nx.draw(self.G, self.pos, labels={u:mf[u] for u in self.G.nodes()}, with_labels = True, node_size=node_size, font_size=font_size)
-  #       elif with_filtration:
-  #         nx.draw(self.G, self.pos, labels={u:self.filtration[u] for u in self.G.nodes()}, with_labels = True, node_size=node_size, font_size=font_size)
-  #       else:
-  #         nx.draw(self.G, self.pos, with_labels = False, node_size=node_size, font_size=font_size)
-  #   else:
-  #     if with_labels:
-  #       if modified:
-  #         mf = self.get_modified_filtration()
-  #         nx.draw(self.G, self.pos, labels={u:f'V{u} : {mf[u]}' for u in self.G.nodes()}, with_labels = True, node_size=node_size, font_size=font_size, ax=ax)
-  #       elif with_filtration:
-  #         nx.draw(self.G, self.pos, labels={u:f'V{u} : {self.filtration[u]}' for u in self.G.nodes()}, with_labels = True, node_size=node_size, font_size=font_size, ax=ax)
-  #       else:
-  #         nx.draw(self.G, self.pos, labels = {u:f'V{u}' for u in self.G.nodes()}, with_labels = True, node_size=node_size, font_size=font_size, ax=ax)
-  #     else:
-  #       if modified:
-  #         mf = self.get_modified_filtration()
-  #         nx.draw(self.G, self.pos, labels={u:mf[u] for u in self.G.nodes()}, with_labels = True, node_size=node_size, font_size=font_size, ax=ax)
-  #       elif with_filtration:
-  #         nx.draw(self.G, self.pos, labels={u:self.filtration[u] for u in self.G.nodes()}, with_labels = True, node_size=node_size, font_size=font_size, ax=ax)
-  #       else:
-  #         nx.draw(self.G, self.pos, with_labels = False, node_size=node_size, font_size=font_size, ax=ax)
+        values = np.asarray(filtered).ravel()
+        return {index: values[index] for index in range(values.shape[0])}

@@ -1,10 +1,9 @@
-"""Unified persistence filtering wrapper.
+"""Unified persistence-filter orchestration."""
 
-This module combines image and graph filtering interfaces in a single class.
-"""
+from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Sequence, Tuple
+from typing import Iterable, Optional, Sequence
 
 import numpy as np
 
@@ -14,20 +13,25 @@ from .filter_image import TopologicalFilterImage
 
 @dataclass(frozen=True)
 class Filtered:
-    """Container for a cached filtered signal."""
+    """Container for a filtered signal snapshot."""
 
     signal: np.ndarray
-    iteration_order: Tuple[str, ...]
+    iteration_order: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _RunKey:
+    iteration_order: tuple[str, ...]
+    epsilon_sequence: tuple[float, ...]
+    method: str
+    recursive: bool
+    iter_vertex: bool
+    is_triangulated: bool
+    size_range: tuple[float, float] | None
 
 
 class PersistenceFilter:
-    """Perform low persistence filtering on arrays and graph-with-faces signals.
-
-    Supported inputs:
-    1. ``np.ndarray`` (1D/2D/3D image signal)
-    2. ``[faces, holes, signal]`` or ``[faces, holes, signal, edges]`` for graphs
-       where ``faces`` and ``holes`` are lists and ``signal`` is an ``np.ndarray``.
-    """
+    """Apply repeated low-persistence filtering across homology dimensions."""
 
     def __init__(self) -> None:
         self.type = None
@@ -36,30 +40,28 @@ class PersistenceFilter:
         self.faces = None
         self.holes = None
         self.edges = None
-        self._graph_n_vertices = None
 
-        # Public history (kept for backwards compatibility).
         self.bht = []
         self.filtered = []
-        self.filtered_type = []  # each type is a tuple[str, ...]
+        self.filtered_type = []
 
-        # Internal caches.
-        self._filtered_cache: Dict[Tuple[str, ...], np.ndarray] = {}
-        self._bht_cache: Dict[Tuple[str, ...], object] = {}
-        self._last_key: Tuple[str, ...] = ()
+        self._filtered_cache: dict[_RunKey, np.ndarray] = {}
+        self._bht_cache: dict[_RunKey, object] = {}
+        self._latest_by_order: dict[tuple[str, ...], _RunKey] = {}
+        self._last_key: _RunKey | None = None
 
     def _reset_cache(self) -> None:
         self.bht = []
         self.filtered = []
         self.filtered_type = []
-        self._bht_cache = {}
         self._filtered_cache = {}
-        self._last_key = ()
-        if self.signal is not None:
-            self._filtered_cache[()] = np.array(self.signal, copy=True)
+        self._bht_cache = {}
+        self._latest_by_order = {}
+        self._last_key = None
 
     def load_signal(self, signal):
-        """Load a signal and reset all cached filtering results."""
+        """Load an array or graph-with-faces signal and clear cached runs."""
+
         if isinstance(signal, np.ndarray):
             self.signal = np.array(signal, copy=True)
             self.type = "array"
@@ -67,22 +69,21 @@ class PersistenceFilter:
             self.faces = None
             self.holes = None
             self.edges = None
-            self._graph_n_vertices = None
             self._reset_cache()
             return self
 
         if isinstance(signal, (list, tuple)):
             if len(signal) not in (3, 4):
                 raise TypeError(
-                    "Graph input should be [faces, holes, signal] or "
-                    "[faces, holes, signal, edges]."
+                    "Graph input must be [faces, holes, signal] or [faces, holes, signal, edges]."
                 )
+
             faces, holes, values = signal[:3]
             edges = signal[3] if len(signal) == 4 else None
             if not isinstance(faces, list) or not isinstance(holes, list):
                 raise TypeError("faces and holes must be lists.")
             if not isinstance(values, np.ndarray):
-                raise TypeError("graph signal values must be provided as np.ndarray.")
+                raise TypeError("Graph signal values must be provided as a numpy array.")
 
             self.faces = faces
             self.holes = holes
@@ -90,22 +91,18 @@ class PersistenceFilter:
             self.signal = np.array(values, copy=True).ravel()
             self.type = "graph"
             self.dim = 1
-            self._graph_n_vertices = self.signal.shape[0]
             self._reset_cache()
             return self
 
         raise TypeError(
-            "signal should be a numpy array, or [faces, holes, signal] "
-            "(optionally with edges as a 4th element)."
+            "signal must be a numpy array, or [faces, holes, signal] "
+            "(optionally with edges as a fourth element)."
         )
 
     @staticmethod
-    def _normalize_iteration_order(iteration_order) -> Tuple[str, ...]:
-        if isinstance(iteration_order, str):
-            items = list(iteration_order)
-        else:
-            items = [str(x) for x in iteration_order]
-        if any(x not in {"0", "1"} for x in items):
+    def _normalize_iteration_order(iteration_order) -> tuple[str, ...]:
+        items = list(iteration_order) if isinstance(iteration_order, str) else [str(item) for item in iteration_order]
+        if any(item not in {"0", "1"} for item in items):
             raise ValueError("iteration_order should contain only '0' and '1'.")
         return tuple(items)
 
@@ -116,20 +113,46 @@ class PersistenceFilter:
         if isinstance(epsilon, dict):
             if step in epsilon:
                 return float(epsilon[step])
-            key_int = int(step)
-            if key_int in epsilon:
-                return float(epsilon[key_int])
+            key = int(step)
+            if key in epsilon:
+                return float(epsilon[key])
             raise KeyError(f"Missing epsilon for homology {step}.")
         if isinstance(epsilon, Sequence):
             if len(epsilon) != 2:
-                raise ValueError(
-                    "When epsilon is a sequence, it should have length 2 "
-                    "(for homology 0 and 1)."
-                )
+                raise ValueError("epsilon sequences must contain exactly two values.")
             return float(epsilon[int(step)])
         raise TypeError(
             "epsilon should be a scalar, a dict keyed by 0/1 (or '0'/'1'), "
             "or a length-2 sequence."
+        )
+
+    @staticmethod
+    def _normalize_size_range(size_range) -> tuple[float, float] | None:
+        if size_range is None:
+            return None
+        if len(size_range) != 2:
+            raise ValueError("size_range must contain exactly two numbers.")
+        return float(size_range[0]), float(size_range[1])
+
+    def _make_run_key(
+        self,
+        *,
+        iteration_order: tuple[str, ...],
+        epsilon_sequence: tuple[float, ...],
+        method: str,
+        recursive: bool,
+        iter_vertex: bool,
+        is_triangulated: bool,
+        size_range: tuple[float, float] | None,
+    ) -> _RunKey:
+        return _RunKey(
+            iteration_order=iteration_order,
+            epsilon_sequence=epsilon_sequence,
+            method=method,
+            recursive=recursive,
+            iter_vertex=iter_vertex,
+            is_triangulated=is_triangulated,
+            size_range=size_range,
         )
 
     def _build_filter(
@@ -138,7 +161,6 @@ class PersistenceFilter:
         *,
         dual: bool,
         method: str,
-        bht_method: str,
         recursive: bool,
         iter_vertex: bool,
         is_triangulated: bool,
@@ -147,7 +169,6 @@ class PersistenceFilter:
             return TopologicalFilterImage(
                 np.array(current_signal, copy=True),
                 method=method,
-                bht_method=bht_method,
                 dual=dual,
                 recursive=recursive,
                 iter_vertex=iter_vertex,
@@ -156,7 +177,6 @@ class PersistenceFilter:
         if self.type == "graph":
             graph_filter = TopologicalFilterGraph(
                 method=method,
-                bht_method=bht_method,
                 dual=dual,
                 recursive=recursive,
                 is_triangulated=is_triangulated,
@@ -184,95 +204,107 @@ class PersistenceFilter:
         size_range=None,
         return_sequence=False,
     ):
-        """Apply low persistence filtering in the requested homology order.
-
-        Parameters
-        ----------
-        epsilon:
-            Scalar threshold used for every step, or per-homology values via
-            ``{0: e0, 1: e1}``, ``{"0": e0, "1": e1}``, or ``[e0, e1]``.
-        iteration_order:
-            String/iterable made of ``0`` and ``1`` (e.g. ``"0"``, ``"01"``,
-            ``"101"``). ``0`` means primal filtering, ``1`` means dual filtering.
-        return_sequence:
-            If ``True``, also returns intermediate cached snapshots.
-        """
+        del bht_method
         if self.signal is None:
             raise RuntimeError("No signal has been loaded. Use load_signal(...) first.")
 
         order = self._normalize_iteration_order(iteration_order)
-        if len(order) == 0:
-            self._last_key = ()
-            out = np.array(self.signal, copy=True)
-            return (out, []) if return_sequence else out
+        if not order:
+            empty = np.array(self.signal, copy=True)
+            return (empty, []) if return_sequence else empty
 
-        # Reuse the longest available prefix.
+        normalized_size_range = self._normalize_size_range(size_range)
+        epsilon_sequence = tuple(self._epsilon_for_step(epsilon, step) for step in order)
+        sequence: list[Filtered] = []
+        full_key = self._make_run_key(
+            iteration_order=order,
+            epsilon_sequence=epsilon_sequence,
+            method=method,
+            recursive=recursive,
+            iter_vertex=iter_vertex,
+            is_triangulated=is_triangulated,
+            size_range=normalized_size_range,
+        )
+        if full_key in self._filtered_cache:
+            self._last_key = full_key
+            self._latest_by_order[order] = full_key
+            result = np.array(self._filtered_cache[full_key], copy=True)
+            if return_sequence:
+                return result, sequence
+            return result
+
         prefix_len = len(order)
-        while prefix_len >= 0 and order[:prefix_len] not in self._filtered_cache:
+        while prefix_len > 0:
+            prefix_key = self._make_run_key(
+                iteration_order=order[:prefix_len],
+                epsilon_sequence=epsilon_sequence[:prefix_len],
+                method=method,
+                recursive=recursive,
+                iter_vertex=iter_vertex,
+                is_triangulated=is_triangulated,
+                size_range=normalized_size_range,
+            )
+            if prefix_key in self._filtered_cache:
+                break
             prefix_len -= 1
-        if prefix_len < 0:
-            prefix_len = 0
 
-        current_key = order[:prefix_len]
-        current = np.array(self._filtered_cache[current_key], copy=True)
-        sequence = []
+        if prefix_len == 0:
+            current = np.array(self.signal, copy=True)
+        else:
+            current = np.array(self._filtered_cache[prefix_key], copy=True)
 
-        for idx in range(prefix_len, len(order)):
-            step = order[idx]
-            dual = step == "1"
-            step_epsilon = self._epsilon_for_step(epsilon, step)
+        for index in range(prefix_len, len(order)):
+            dual = order[index] == "1"
             filter_obj = self._build_filter(
                 current,
                 dual=dual,
                 method=method,
-                bht_method=bht_method,
                 recursive=recursive,
                 iter_vertex=iter_vertex,
                 is_triangulated=is_triangulated,
             )
             current = np.array(
-                filter_obj.low_pers_filter(step_epsilon, size_range=size_range),
+                filter_obj.low_pers_filter(epsilon_sequence[index], size_range=normalized_size_range),
                 copy=True,
             )
-            if self.type == "graph" and self._graph_n_vertices is not None:
-                current = current.ravel()[: self._graph_n_vertices].copy()
-            key = order[: idx + 1]
+            key = self._make_run_key(
+                iteration_order=order[: index + 1],
+                epsilon_sequence=epsilon_sequence[: index + 1],
+                method=method,
+                recursive=recursive,
+                iter_vertex=iter_vertex,
+                is_triangulated=is_triangulated,
+                size_range=normalized_size_range,
+            )
             self._filtered_cache[key] = np.array(current, copy=True)
             self._bht_cache[key] = filter_obj.bht
+            self._latest_by_order[key.iteration_order] = key
+            self._last_key = key
 
-            if key not in self.filtered_type:
-                self.filtered_type.append(key)
+            if key.iteration_order not in self.filtered_type:
+                self.filtered_type.append(key.iteration_order)
                 self.filtered.append(np.array(current, copy=True))
                 self.bht.append(filter_obj.bht)
 
-            sequence.append(Filtered(signal=np.array(current, copy=True), iteration_order=key))
+            sequence.append(Filtered(signal=np.array(current, copy=True), iteration_order=key.iteration_order))
 
-        self._last_key = order
-
+        result_key = self._latest_by_order[order]
+        self._last_key = result_key
+        result = np.array(self._filtered_cache[result_key], copy=True)
         if return_sequence:
-            return np.array(self._filtered_cache[order], copy=True), sequence
-        return np.array(self._filtered_cache[order], copy=True)
+            return result, sequence
+        return result
 
     def get_filtered(self, iteration_order: Optional[Iterable[str]] = None) -> np.ndarray:
-        """Return a cached filtered signal."""
         if self.signal is None:
             raise RuntimeError("No signal has been loaded. Use load_signal(...) first.")
-        key = self._last_key if iteration_order is None else self._normalize_iteration_order(iteration_order)
-        if key not in self._filtered_cache:
-            raise KeyError(
-                f"No cached result for iteration_order={''.join(key)}. "
-                "Run low_pers_filter(...) first."
-            )
+        key = self._last_key if iteration_order is None else self._latest_by_order.get(self._normalize_iteration_order(iteration_order))
+        if key is None or key not in self._filtered_cache:
+            raise KeyError("No cached filtered signal found for the requested iteration order.")
         return np.array(self._filtered_cache[key], copy=True)
 
     def get_BHT(self, iteration_order: Optional[Iterable[str]] = None):
-        """Return the BHT of a cached filtering run."""
-        key = self._last_key if iteration_order is None else self._normalize_iteration_order(iteration_order)
-        if len(key) == 0:
-            raise KeyError("No BHT exists for the empty iteration order.")
-        if key not in self._bht_cache:
-            raise KeyError(
-                f"No cached BHT for iteration_order={''.join(key)}. "
-                "Run low_pers_filter(...) first."
-            )
+        key = self._last_key if iteration_order is None else self._latest_by_order.get(self._normalize_iteration_order(iteration_order))
+        if key is None or key not in self._bht_cache:
+            raise KeyError("No cached BHT found for the requested iteration order.")
         return self._bht_cache[key]

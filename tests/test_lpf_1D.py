@@ -1,7 +1,6 @@
 import pytest
 import numpy as np
-from topapprox import TopologicalFilterImage
-from .helpers import check_bht
+from topapprox import ImageFilter, available_backends
 
 # TEST_CASES is a dictionary that maps descriptive test names to corresponding 1D signal test data.
 # Each entry consists of:
@@ -45,12 +44,12 @@ TEST_CASES = {
 }
 
 
-@pytest.mark.parametrize("method", ["python", "numba", "cpp"])
+@pytest.mark.parametrize("method", available_backends())
 def test_all_1D_cases(method):
     for case_name, case in TEST_CASES.items():
         signal = case["signal"]
         tests = case["tests"]
-        uf = TopologicalFilterImage(signal, method=method)
+        uf = ImageFilter(signal, method=method)
 
         for test in tests:
             epsilon = test["threshold"]
