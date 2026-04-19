@@ -22,8 +22,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install project
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Install project (base + test + plot)
+        run: |
+          python -m pip install --upgrade pip build
+          python -m pip install -e ".[test,plot]"
+
+      # numba 0.60 + llvmlite crashes with a fatal access violation on
+      # Windows + CPython 3.10 during JIT compilation of the recursive
+      # union-find kernels. All other OS / Python combinations run the
+      # numba backend cleanly. Test suite skips backends that fail to
+      # import, so excluding the numba extra here is enough.
+      - name: Install numba extra (stable combinations only)
+        if: ${{ !(matrix.os == 'windows-latest' && matrix.python-version == '3.10') }}
+        run: python -m pip install -e ".[numba]"
 
       - name: Run tests
         run: python -m pytest -q
