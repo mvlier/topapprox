@@ -61,9 +61,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/shizuo-kaji/topapprox"
-Repository = "https://github.com/shizuo-kaji/topapprox"
-Issues = "https://github.com/shizuo-kaji/topapprox/issues"
+Homepage = "https://github.com/mvlier/topapprox"
+Repository = "https://github.com/mvlier/topapprox"
+Issues = "https://github.com/mvlier/topapprox/issues"
 
 [tool.scikit-build]
 minimum-version = "build-system.requires"
@@ -78,6 +78,19 @@ include = [
     "tests/*.py",
     "tests/data_for_testing/*.npy",
     "topapprox/*.cpp",
+]
+exclude = [
+    ".claude/**",
+    ".pytest_cache/**",
+    ".github/**",
+    "build/**",
+    "dist/**",
+    "notebook/**",
+    "docs/**",
+    "**/__pycache__/**",
+    "*.so",
+    "*.pyd",
+    "*.dylib",
 ]
 
 [tool.pytest.ini_options]

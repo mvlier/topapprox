@@ -1,5 +1,10 @@
 # topapprox
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+**Authors**:
+[Matias de Jong van Lier](https://sites.google.com/view/matiasvanlier), [Junyan Chu](https://sites.google.com/view/junyan-chu/), Sebastían Elías Graiff Zurita, [Shizuo Kaji](https://www.skaji.org/)
+
 `topapprox` is a Python package for persistent-homology-based filtering of scalar signals on:
 
 - 1D, 2D, and 3D arrays
@@ -61,7 +66,6 @@ pd0_fn, pd1_fn = get_PD_gwf(faces, holes, signal, method="python")
 ## Documentation & Examples
 
 - [Interactive Tutorial](notebook/Interactive_Tutorial_topapprox.ipynb)
-- [Topological Filtering Walkthrough](notebook/Topological_Filtering.ipynb)
 - [BHT Basin Visualization](notebook/BHT_Basin_Visualization.ipynb)
 - [Reproducing Paper Examples](notebook/Reproducing_paper_examples.ipynb)
 - [Notebook/API migration memo](docs/migration.md)

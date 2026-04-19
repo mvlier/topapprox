@@ -8,6 +8,7 @@ on:
 
 jobs:
   build_wheels:
+    name: Build wheels on ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -17,10 +18,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - uses: pypa/cibuildwheel@v2.21
-        env:
-          CIBW_OUTPUT_DIR: wheelhouse
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21
 
       - uses: actions/upload-artifact@v4
         with:
@@ -28,17 +30,22 @@ jobs:
           path: wheelhouse/*.whl
 
   build_sdist:
+    name: Build sdist
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
       - name: Build sdist
-        run: python -m pip install --upgrade pip build && python -m build --sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --sdist
 
       - uses: actions/upload-artifact@v4
         with:
@@ -46,9 +53,13 @@ jobs:
           path: dist/*.tar.gz
 
   publish:
+    name: Publish to PyPI
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/topapprox
     permissions:
       id-token: write
 
@@ -58,4 +69,5 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
