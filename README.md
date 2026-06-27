@@ -79,14 +79,6 @@ Run the full test suite:
 python -m pytest -q
 ```
 
-Build distributions locally:
-
-```bash
-python -m build --wheel --sdist
-```
-
-Binary wheels are built with `cibuildwheel`, and the native extension is compiled through `scikit-build-core` + CMake.
-
 ## Citation
 
 If you use this package in your work, please cite:
@@ -106,4 +98,4 @@ If you use this package in your work, please cite:
 
 ## Migration Notes
 
-The refactor intentionally simplified the public surface and build system. If you are adapting older notebooks, see [docs/migration.md](docs/migration.md).
+See [docs/migration.md](docs/migration.md).
