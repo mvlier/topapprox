@@ -33,7 +33,7 @@ jobs:
       # numba backend cleanly. Test suite skips backends that fail to
       # import, so excluding the numba extra here is enough.
       - name: Install numba extra (stable combinations only)
-        if: ${{ !(matrix.os == 'windows-latest' && matrix.python-version == '3.10') }}
+        if: ${{ matrix.os != 'windows-latest' }}
         run: python -m pip install -e ".[numba]"
 
       - name: Run tests
