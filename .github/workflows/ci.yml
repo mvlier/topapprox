@@ -41,3 +41,19 @@ jobs:
 
       - name: Build wheel
         run: python -m build --wheel
+
+      # On CPython >= 3.12 the nanobind extension is built against the stable
+      # ABI, so scikit-build-core tags the wheel cp312-abi3. Below 3.12 the
+      # wheel stays version-specific. Assert that this holds.
+      - name: Verify wheel ABI tag
+        shell: bash
+        run: |
+          ls -l dist/
+          python -c "
+          import sys, pathlib
+          wheel = sorted(pathlib.Path('dist').glob('*.whl'))[-1].name
+          print('built wheel:', wheel)
+          want_abi3 = sys.version_info[:2] >= (3, 12)
+          assert ('abi3' in wheel) == want_abi3, (wheel, sys.version)
+          print('OK: stable-ABI (abi3) wheel' if want_abi3 else 'OK: version-specific wheel')
+          "

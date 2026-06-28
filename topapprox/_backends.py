@@ -83,13 +83,40 @@ def _numba_backend() -> LinkReduceBackend:
     )
 
 
+def _coerce_birth(birth: np.ndarray) -> np.ndarray:
+    return np.ascontiguousarray(birth, dtype=np.float64)
+
+
+def _coerce_edges(edges: np.ndarray) -> np.ndarray:
+    return np.ascontiguousarray(edges, dtype=np.int64)
+
+
 def _cpp_backend() -> LinkReduceBackend:
+    # The nanobind kernels bind typed C-contiguous arrays (float64 birth,
+    # int64 edges) and, unlike pybind11's forcecast, do not silently upcast.
+    # Coerce inputs here so callers can keep passing float32 / platform-int
+    # arrays (e.g. int32 from np.arange on Windows).
     module = import_module(".link_reduce_cpp", package=__package__)
+    raw_edges = module._link_reduce_cpp
+    raw_grid_2d = module._link_reduce_vertices_cpp
+    raw_grid_3d = getattr(module, "_link_reduce_vertices_cpp_3D", None)
+
+    def reduce_edges(birth, edges, epsilon=0.0, keep_basin=False):
+        return raw_edges(_coerce_birth(birth), _coerce_edges(edges), epsilon, keep_basin)
+
+    def reduce_grid_2d(birth, shape, dual):
+        return raw_grid_2d(_coerce_birth(birth), shape, dual)
+
+    reduce_grid_3d = None
+    if raw_grid_3d is not None:
+        def reduce_grid_3d(birth, shape, dual):
+            return raw_grid_3d(_coerce_birth(birth), shape, dual)
+
     return LinkReduceBackend(
         name="cpp",
-        reduce_edges=module._link_reduce_cpp,
-        reduce_grid_2d=module._link_reduce_vertices_cpp,
-        reduce_grid_3d=getattr(module, "_link_reduce_vertices_cpp_3D", None),
+        reduce_edges=reduce_edges,
+        reduce_grid_2d=reduce_grid_2d,
+        reduce_grid_3d=reduce_grid_3d,
     )
 
 

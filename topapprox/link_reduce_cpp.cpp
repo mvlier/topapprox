@@ -1,23 +1,33 @@
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <numeric>
+#include <stdexcept>
 #include <tuple>
 #include <utility>
 #include <vector>
 
-#include <pybind11/numpy.h>
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/tuple.h>
+#include <nanobind/stl/vector.h>
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace {
 
 using Index = std::int64_t;
 using Birth = double;
 using Children = std::vector<std::vector<Index>>;
+
+// Input arrays are normalized to the exact dtype / C-contiguous layout on the
+// Python side (see topapprox/_backends.py::_cpp_backend), so nanobind can bind
+// them zero-copy. nanobind's typed ndarray does not silently upcast dtypes the
+// way pybind11's py::array::forcecast did, hence the boundary normalization.
+using BirthArray = nb::ndarray<const Birth, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using EdgeArray = nb::ndarray<const Index, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 
 struct LinkReduceResult {
     std::vector<Index> parent;
@@ -36,39 +46,41 @@ Index compute_root(Index vertex, std::vector<Index>& ancestor) {
     return ancestor[vertex];
 }
 
+// Move a std::vector onto the heap and expose its storage as a 1D NumPy array.
+// A capsule keeps the vector alive until the array is garbage-collected.
 template <typename T>
-py::array_t<T> vector_to_array(const std::vector<T>& values) {
-    py::array_t<T> array(values.size());
-    auto mutable_view = array.template mutable_unchecked<1>();
-    for (py::ssize_t index = 0; index < mutable_view.shape(0); ++index) {
-        mutable_view(index) = values[static_cast<std::size_t>(index)];
-    }
-    return array;
+nb::ndarray<nb::numpy, T, nb::ndim<1>> vector_to_array(std::vector<T> values) {
+    auto* heap = new std::vector<T>(std::move(values));
+    nb::capsule owner(heap, [](void* payload) noexcept {
+        delete static_cast<std::vector<T>*>(payload);
+    });
+    const std::size_t size = heap->size();
+    // For an empty vector, data() may be nullptr on some standard libraries.
+    // Pass a valid, never-dereferenced address so nanobind always wraps the
+    // provided storage instead of self-allocating.
+    void* data = size != 0 ? static_cast<void*>(heap->data()) : static_cast<void*>(heap);
+    return nb::ndarray<nb::numpy, T, nb::ndim<1>>(data, {size}, owner);
 }
 
-std::vector<std::array<Index, 2>> copy_edges(
-    const py::array_t<Index, py::array::c_style | py::array::forcecast>& edges
-) {
-    auto view = edges.unchecked<2>();
-    if (view.shape(1) != 2) {
+std::vector<std::array<Index, 2>> copy_edges(const EdgeArray& edges) {
+    if (edges.shape(1) != 2) {
         throw std::runtime_error("Edges must have shape (n, 2).");
     }
 
+    const Index* edge_data = edges.data();
+    const std::size_t rows = edges.shape(0);
     std::vector<std::array<Index, 2>> copied;
-    copied.reserve(static_cast<std::size_t>(view.shape(0)));
-    for (py::ssize_t row = 0; row < view.shape(0); ++row) {
-        copied.push_back({view(row, 0), view(row, 1)});
+    copied.reserve(rows);
+    for (std::size_t row = 0; row < rows; ++row) {
+        copied.push_back({edge_data[row * 2 + 0], edge_data[row * 2 + 1]});
     }
     return copied;
 }
 
-LinkReduceResult link_reduce_edges(
-    const py::array_t<Birth, py::array::c_style | py::array::forcecast>& birth,
-    const py::array_t<Index, py::array::c_style | py::array::forcecast>& edges
-) {
-    auto birth_view = birth.unchecked<1>();
+LinkReduceResult link_reduce_edges(const BirthArray& birth, const EdgeArray& edges) {
+    const Birth* birth_data = birth.data();
     const auto copied_edges = copy_edges(edges);
-    const auto size = static_cast<std::size_t>(birth_view.shape(0));
+    const auto size = static_cast<std::size_t>(birth.shape(0));
 
     LinkReduceResult result;
     result.parent = std::vector<Index>(size);
@@ -84,13 +96,13 @@ LinkReduceResult link_reduce_edges(
         const auto second = edge[1];
         auto first_root = compute_root(first, ancestor);
         auto second_root = compute_root(second, ancestor);
-        const auto death = std::max(birth_view(first), birth_view(second));
+        const auto death = std::max(birth_data[first], birth_data[second]);
 
         if (first_root == second_root) {
             continue;
         }
 
-        if (birth_view(first_root) < birth_view(second_root)) {
+        if (birth_data[first_root] < birth_data[second_root]) {
             std::swap(first_root, second_root);
         }
 
@@ -98,9 +110,9 @@ LinkReduceResult link_reduce_edges(
         result.parent[first_root] = second_root;
         ancestor[first_root] = second_root;
         result.root = second_root;
-        result.linking_vertex[first_root] = birth_view(first) > birth_view(second) ? first : second;
+        result.linking_vertex[first_root] = birth_data[first] > birth_data[second] ? first : second;
 
-        if (birth_view(first_root) < death) {
+        if (birth_data[first_root] < death) {
             result.persistent_children[second_root].push_back(first_root);
             result.positive_pers.push_back(first_root);
         }
@@ -194,17 +206,13 @@ std::vector<Index> neighbors_3d(
 }
 
 template <typename NeighborFn>
-LinkReduceResult link_reduce_grid(
-    const py::array_t<Birth, py::array::c_style | py::array::forcecast>& birth,
-    Index size,
-    NeighborFn&& compute_neighbors
-) {
-    auto birth_view = birth.unchecked<1>();
+LinkReduceResult link_reduce_grid(const BirthArray& birth, Index size, NeighborFn&& compute_neighbors) {
+    const Birth* birth_data = birth.data();
 
-    std::vector<Index> ordered_vertices(size);
+    std::vector<Index> ordered_vertices(static_cast<std::size_t>(size));
     std::iota(ordered_vertices.begin(), ordered_vertices.end(), 0);
     std::sort(ordered_vertices.begin(), ordered_vertices.end(), [&](Index left, Index right) {
-        return birth_view(left) < birth_view(right);
+        return birth_data[left] < birth_data[right];
     });
 
     LinkReduceResult result;
@@ -221,7 +229,7 @@ LinkReduceResult link_reduce_grid(
             if (neighbor >= size) {
                 continue;
             }
-            if (birth_view(neighbor) > birth_view(vertex)) {
+            if (birth_data[neighbor] > birth_data[vertex]) {
                 continue;
             }
 
@@ -231,7 +239,7 @@ LinkReduceResult link_reduce_grid(
                 continue;
             }
 
-            if (birth_view(neighbor_root) < birth_view(vertex_root)) {
+            if (birth_data[neighbor_root] < birth_data[vertex_root]) {
                 std::swap(neighbor_root, vertex_root);
             }
 
@@ -241,7 +249,7 @@ LinkReduceResult link_reduce_grid(
             result.root = vertex_root;
             result.linking_vertex[neighbor_root] = vertex;
 
-            if (birth_view(neighbor_root) < birth_view(vertex)) {
+            if (birth_data[neighbor_root] < birth_data[vertex]) {
                 result.persistent_children[vertex_root].push_back(neighbor_root);
                 result.positive_pers.push_back(neighbor_root);
             }
@@ -251,22 +259,22 @@ LinkReduceResult link_reduce_grid(
     return result;
 }
 
-py::tuple to_python_tuple(const LinkReduceResult& result) {
-    return py::make_tuple(
-        vector_to_array(result.parent),
-        py::cast(result.children),
+nb::tuple to_python_tuple(LinkReduceResult result) {
+    return nb::make_tuple(
+        vector_to_array(std::move(result.parent)),
+        std::move(result.children),
         result.root,
-        vector_to_array(result.linking_vertex),
-        py::cast(result.persistent_children),
-        vector_to_array(result.positive_pers)
+        vector_to_array(std::move(result.linking_vertex)),
+        std::move(result.persistent_children),
+        vector_to_array(std::move(result.positive_pers))
     );
 }
 
 }  // namespace
 
-py::tuple link_reduce_edges_py(
-    const py::array_t<Birth, py::array::c_style | py::array::forcecast>& birth,
-    const py::array_t<Index, py::array::c_style | py::array::forcecast>& edges,
+nb::tuple link_reduce_edges_py(
+    const BirthArray& birth,
+    const EdgeArray& edges,
     Birth epsilon,
     bool keep_basin
 ) {
@@ -275,11 +283,7 @@ py::tuple link_reduce_edges_py(
     return to_python_tuple(link_reduce_edges(birth, edges));
 }
 
-py::tuple link_reduce_vertices_2d_py(
-    const py::array_t<Birth, py::array::c_style | py::array::forcecast>& birth,
-    std::pair<Index, Index> shape,
-    bool dual
-) {
+nb::tuple link_reduce_vertices_2d_py(const BirthArray& birth, std::pair<Index, Index> shape, bool dual) {
     const auto size = static_cast<Index>(birth.size());
     const auto extra_vertex = size - 1;
     auto result = link_reduce_grid(
@@ -287,14 +291,10 @@ py::tuple link_reduce_vertices_2d_py(
         size,
         [&](Index vertex) { return neighbors_2d(vertex, shape.first, shape.second, dual, extra_vertex); }
     );
-    return to_python_tuple(result);
+    return to_python_tuple(std::move(result));
 }
 
-py::tuple link_reduce_vertices_3d_py(
-    const py::array_t<Birth, py::array::c_style | py::array::forcecast>& birth,
-    std::tuple<Index, Index, Index> shape,
-    bool dual
-) {
+nb::tuple link_reduce_vertices_3d_py(const BirthArray& birth, std::tuple<Index, Index, Index> shape, bool dual) {
     const auto size = static_cast<Index>(birth.size());
     const auto extra_vertex = size - 1;
     auto result = link_reduce_grid(
@@ -311,20 +311,20 @@ py::tuple link_reduce_vertices_3d_py(
             );
         }
     );
-    return to_python_tuple(result);
+    return to_python_tuple(std::move(result));
 }
 
-PYBIND11_MODULE(link_reduce_cpp, module) {
-    module.doc() = "Native link-reduce kernels for topapprox.";
+NB_MODULE(link_reduce_cpp, m) {
+    m.attr("__doc__") = "Native link-reduce kernels for topapprox.";
 
-    module.def(
+    m.def(
         "_link_reduce_cpp",
         &link_reduce_edges_py,
-        py::arg("birth"),
-        py::arg("edges"),
-        py::arg("epsilon") = 0.0,
-        py::arg("keep_basin") = false
+        nb::arg("birth"),
+        nb::arg("edges"),
+        nb::arg("epsilon") = 0.0,
+        nb::arg("keep_basin") = false
     );
-    module.def("_link_reduce_vertices_cpp", &link_reduce_vertices_2d_py, py::arg("birth"), py::arg("shape"), py::arg("dual"));
-    module.def("_link_reduce_vertices_cpp_3D", &link_reduce_vertices_3d_py, py::arg("birth"), py::arg("shape"), py::arg("dual"));
+    m.def("_link_reduce_vertices_cpp", &link_reduce_vertices_2d_py, nb::arg("birth"), nb::arg("shape"), nb::arg("dual"));
+    m.def("_link_reduce_vertices_cpp_3D", &link_reduce_vertices_3d_py, nb::arg("birth"), nb::arg("shape"), nb::arg("dual"));
 }
