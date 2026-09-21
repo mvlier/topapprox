@@ -26,25 +26,25 @@ find_package(nanobind CONFIG REQUIRED)
 # NOMINSIZE: keep release -O2/-O3 instead of nanobind's default -Os, since these
 #            are performance-sensitive numeric kernels.
 # NB_SUPPRESS_WARNINGS: treat nanobind/Python headers as system includes.
-nanobind_add_module(link_reduce_cpp
+nanobind_add_module(_reduce_cpp
   STABLE_ABI
   NB_STATIC
   NOMINSIZE
   NB_SUPPRESS_WARNINGS
-  topapprox/link_reduce_cpp.cpp)
+  topapprox/_reduce_cpp.cpp)
 
-target_compile_features(link_reduce_cpp PRIVATE cxx_std_17)
+target_compile_features(_reduce_cpp PRIVATE cxx_std_17)
 
 if(MSVC)
-  target_compile_options(link_reduce_cpp PRIVATE /O2 /EHsc /permissive-)
+  target_compile_options(_reduce_cpp PRIVATE /O2 /EHsc /permissive-)
 else()
-  target_compile_options(link_reduce_cpp PRIVATE -O3 -Wall -Wextra -Wpedantic)
+  target_compile_options(_reduce_cpp PRIVATE -O3 -Wall -Wextra -Wpedantic)
 endif()
 
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
 if(ipo_supported)
-  set_property(TARGET link_reduce_cpp PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+  set_property(TARGET _reduce_cpp PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
 
-install(TARGETS link_reduce_cpp LIBRARY DESTINATION topapprox RUNTIME DESTINATION topapprox)
+install(TARGETS _reduce_cpp LIBRARY DESTINATION topapprox RUNTIME DESTINATION topapprox)
